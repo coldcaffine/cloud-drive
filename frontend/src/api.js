@@ -4,11 +4,11 @@ const api = axios.create({
   baseURL: "https://cloud-drive-backend-kldn.onrender.com",
 });
 
-api.interceptors.request.use((config) => {
+api.interceptors.request.use(function (config) {
   const token = localStorage.getItem("token");
 
   if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+    config.headers.Authorization = "Bearer " + token;
   }
 
   return config;
