@@ -10,6 +10,7 @@ import {
   Trash2,
   Share2,
   Star,
+  Download,
   HardDrive,
   Upload,
   Grid2X2,
@@ -69,10 +70,14 @@ function App() {
       setError("");
 
       const folderParams =
-        currentFolderId === null ? {} : { parent_id: currentFolderId };
+        currentFolderId === null
+          ? {}
+          : { parent_id: currentFolderId };
 
       const fileParams =
-        currentFolderId === null ? {} : { folder_id: currentFolderId };
+        currentFolderId === null
+          ? {}
+          : { folder_id: currentFolderId };
 
       const [
         filesResponse,
@@ -104,7 +109,7 @@ function App() {
       if (err.response?.data) {
         setError(
           err.response.data.detail ||
-            "Could not load your CloudDrive data."
+          "Could not load your CloudDrive data."
         );
       } else {
         setError("Could not connect to the backend.");
@@ -144,7 +149,7 @@ function App() {
 
         setError(
           err.response?.data?.detail ||
-            "Could not open the shared folder."
+          "Could not open the shared folder."
         );
       } finally {
         setLoading(false);
@@ -183,7 +188,10 @@ function App() {
 
     setFolderPath(newPath);
 
-    setCurrentFolderId(newPath[newPath.length - 1].id);
+    setCurrentFolderId(
+      newPath[newPath.length - 1].id
+    );
+
     setCurrentPage("drive");
   }
 
@@ -204,7 +212,9 @@ function App() {
     if (newPath.length === 0) {
       setCurrentFolderId(null);
     } else {
-      setCurrentFolderId(newPath[newPath.length - 1].id);
+      setCurrentFolderId(
+        newPath[newPath.length - 1].id
+      );
     }
   }
 
@@ -223,7 +233,9 @@ function App() {
       formData.append("file", selectedFile);
 
       const params =
-        currentFolderId === null ? {} : { folder_id: currentFolderId };
+        currentFolderId === null
+          ? {}
+          : { folder_id: currentFolderId };
 
       await api.post("/files/upload", formData, {
         params,
@@ -235,7 +247,7 @@ function App() {
 
       setError(
         err.response?.data?.detail ||
-          "Upload failed. Please try again."
+        "Upload failed. Please try again."
       );
     } finally {
       setUploading(false);
@@ -245,11 +257,15 @@ function App() {
 
   async function handleCreateFolder() {
     if (sharedFolderId !== null) {
-      setError("You cannot create folders inside a shared folder yet.");
+      setError(
+        "You cannot create folders inside a shared folder yet."
+      );
       return;
     }
 
-    const folderName = window.prompt("Enter folder name:");
+    const folderName = window.prompt(
+      "Enter folder name:"
+    );
 
     if (!folderName) {
       return;
@@ -276,7 +292,7 @@ function App() {
 
       setError(
         err.response?.data?.detail ||
-          "Could not create folder."
+        "Could not create folder."
       );
     } finally {
       setCreatingFolder(false);
@@ -295,7 +311,7 @@ function App() {
 
       setError(
         err.response?.data?.detail ||
-          "Could not restore file."
+        "Could not restore file."
       );
     }
   }
@@ -304,7 +320,9 @@ function App() {
     try {
       setError("");
 
-      await api.patch(`/folders/${folderId}/restore`);
+      await api.patch(
+        `/folders/${folderId}/restore`
+      );
 
       await loadData();
     } catch (err) {
@@ -312,14 +330,16 @@ function App() {
 
       setError(
         err.response?.data?.detail ||
-          "Could not restore folder."
+        "Could not restore folder."
       );
     }
   }
 
   async function handleDelete(item, type) {
     if (sharedFolderId !== null) {
-      setError("You cannot delete items from a shared folder here.");
+      setError(
+        "You cannot delete items from a shared folder here."
+      );
       return;
     }
 
@@ -346,14 +366,23 @@ function App() {
 
       setError(
         err.response?.data?.detail ||
-          "Could not delete this item."
+        "Could not delete this item."
       );
     }
   }
 
-  async function handleToggleStar(item, type) {
-    if (sharedFolderId !== null) {
-      setError("You cannot star items inside a shared folder here.");
+  async function handleRename(item, type) {
+    const currentName = item.name || "";
+    const newName = window.prompt("Enter new name:", currentName);
+
+    if (newName === null) {
+      return;
+    }
+
+    const name = newName.trim();
+
+    if (!name) {
+      setError("Name cannot be empty.");
       return;
     }
 
@@ -361,9 +390,70 @@ function App() {
       setError("");
 
       if (type === "file") {
-        await api.patch(`/files/${item.id}/star`);
+        await api.patch(`/files/${item.id}/rename`, {
+          name: name,
+        });
       } else {
-        await api.patch(`/folders/${item.id}/star`);
+        await api.patch(`/folders/${item.id}/rename`, {
+          name: name,
+        });
+      }
+
+      await loadData();
+    } catch (err) {
+      console.error("Rename error:", err);
+
+      const detail = err.response?.data?.detail;
+
+      if (Array.isArray(detail)) {
+        setError(
+          detail
+            .map((error) => error.msg || "Invalid rename request.")
+            .join(", ")
+        );
+      } else if (typeof detail === "string") {
+        setError(detail);
+      } else {
+        setError("Could not rename this item.");
+      }
+    }
+  }
+
+  async function handleToggleStar(item, type) {
+    if (sharedFolderId !== null) {
+      setError(
+        "You cannot star items inside a shared folder here."
+      );
+      return;
+    }
+
+    try {
+      setError("");
+
+      if (type === "file") {
+        const starred = isFileStarred(item.id);
+
+        if (starred) {
+          await api.delete(
+            `/files/${item.id}/star`
+          );
+        } else {
+          await api.post(
+            `/files/${item.id}/star`
+          );
+        }
+      } else {
+        const starred = isFolderStarred(item.id);
+
+        if (starred) {
+          await api.delete(
+            `/folders/${item.id}/star`
+          );
+        } else {
+          await api.post(
+            `/folders/${item.id}/star`
+          );
+        }
       }
 
       await loadData();
@@ -372,22 +462,28 @@ function App() {
 
       setError(
         err.response?.data?.detail ||
-          "Could not update star."
+        "Could not update star."
       );
     }
   }
 
   function isFileStarred(fileId) {
-    return starredFiles.some((file) => file.id === fileId);
+    return starredFiles.some(
+      (file) => file.id === fileId
+    );
   }
 
   function isFolderStarred(folderId) {
-    return starredFolders.some((folder) => folder.id === folderId);
+    return starredFolders.some(
+      (folder) => folder.id === folderId
+    );
   }
 
   function openShare(item, type) {
     if (sharedFolderId !== null) {
-      setError("You cannot share items from this shared folder here.");
+      setError(
+        "You cannot share items from this shared folder here."
+      );
       return;
     }
 
@@ -436,7 +532,7 @@ function App() {
 
       setError(
         err.response?.data?.detail ||
-          "Could not share this item."
+        "Could not share this item."
       );
     } finally {
       setSharing(false);
@@ -480,7 +576,7 @@ function App() {
 
       setError(
         err.response?.data?.detail ||
-          "Could not open the shared folder."
+        "Could not open the shared folder."
       );
     } finally {
       setLoading(false);
@@ -495,19 +591,28 @@ function App() {
         `/files/${fileId}/download`
       );
 
-      const downloadUrl = response.data?.download_url;
+      const downloadUrl =
+        response.data?.download_url;
 
       if (!downloadUrl) {
-        throw new Error("Download URL was not returned.");
+        throw new Error(
+          "Download URL was not returned."
+        );
       }
 
-      window.open(downloadUrl, "_blank");
+      const link = document.createElement("a");
+
+      link.href = downloadUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+
+      link.click();
     } catch (err) {
       console.error(err);
 
       setError(
         err.response?.data?.detail ||
-          "Could not download the file."
+        "Could not download the file."
       );
     }
   }
@@ -518,7 +623,8 @@ function App() {
     }
 
     const parts = filename.split(".");
-    const extension = parts[parts.length - 1].toLowerCase();
+    const extension =
+      parts[parts.length - 1].toLowerCase();
 
     if (
       extension === "jpg" ||
@@ -557,10 +663,16 @@ function App() {
     }
 
     if (bytes < 1024 * 1024 * 1024) {
-      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      return `${(
+        bytes /
+        (1024 * 1024)
+      ).toFixed(1)} MB`;
     }
 
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+    return `${(
+      bytes /
+      (1024 * 1024 * 1024)
+    ).toFixed(1)} GB`;
   }
 
   function logout() {
@@ -584,40 +696,57 @@ function App() {
     );
   });
 
-  const filteredTrashFiles = trashFiles.filter((file) => {
-    return (
-      file.name &&
-      file.name.toLowerCase().includes(searchText)
-    );
-  });
+  const filteredTrashFiles = trashFiles.filter(
+    (file) => {
+      return (
+        file.name &&
+        file.name
+          .toLowerCase()
+          .includes(searchText)
+      );
+    }
+  );
 
-  const filteredTrashFolders = trashFolders.filter((folder) => {
-    return (
-      folder.name &&
-      folder.name.toLowerCase().includes(searchText)
-    );
-  });
+  const filteredTrashFolders = trashFolders.filter(
+    (folder) => {
+      return (
+        folder.name &&
+        folder.name
+          .toLowerCase()
+          .includes(searchText)
+      );
+    }
+  );
 
-  const filteredStarredFiles = starredFiles.filter((file) => {
-    return (
-      file.name &&
-      file.name.toLowerCase().includes(searchText)
-    );
-  });
+  const filteredStarredFiles =
+    starredFiles.filter((file) => {
+      return (
+        file.name &&
+        file.name
+          .toLowerCase()
+          .includes(searchText)
+      );
+    });
 
-  const filteredStarredFolders = starredFolders.filter((folder) => {
-    return (
-      folder.name &&
-      folder.name.toLowerCase().includes(searchText)
-    );
-  });
+  const filteredStarredFolders =
+    starredFolders.filter((folder) => {
+      return (
+        folder.name &&
+        folder.name
+          .toLowerCase()
+          .includes(searchText)
+      );
+    });
 
-  const filteredSharedItems = sharedItems.filter((item) => {
-    return (
-      item.name &&
-      item.name.toLowerCase().includes(searchText)
-    );
-  });
+  const filteredSharedItems =
+    sharedItems.filter((item) => {
+      return (
+        item.name &&
+        item.name
+          .toLowerCase()
+          .includes(searchText)
+      );
+    });
 
   function renderBreadcrumb() {
     if (folderPath.length === 0) {
@@ -680,6 +809,19 @@ function App() {
           event.stopPropagation();
         }}
       >
+        {type === "file" && (
+          <button
+            type="button"
+            onClick={() => {
+              handleDownload(item.id);
+            }}
+            title="Download"
+            className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
+          >
+            <Download size={18} />
+          </button>
+        )}
+
         <button
           type="button"
           onClick={() => {
@@ -707,6 +849,17 @@ function App() {
           className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
         >
           <Share2 size={18} />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            handleRename(item, type);
+          }}
+          title="Rename"
+          className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
+        >
+          ✎
         </button>
 
         <button
@@ -812,7 +965,8 @@ function App() {
               </h3>
 
               <p className="text-sm text-gray-400">
-                {files.length} files · {folders.length} folders
+                {files.length} files ·{" "}
+                {folders.length} folders
               </p>
             </div>
 
@@ -842,7 +996,7 @@ function App() {
           </div>
 
           {filteredFiles.length === 0 &&
-          filteredFolders.length === 0 ? (
+            filteredFolders.length === 0 ? (
             <div className="rounded-3xl border border-dashed border-gray-200 bg-white px-6 py-20 text-center">
               <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-[#f0edff] text-[#6d5dfc]">
                 <Cloud size={30} />
@@ -874,7 +1028,10 @@ function App() {
                     </div>
 
                     {!sharedFolderId &&
-                      renderCardActions(folder, "folder")}
+                      renderCardActions(
+                        folder,
+                        "folder"
+                      )}
                   </div>
 
                   <h4 className="truncate text-sm font-semibold">
@@ -908,7 +1065,10 @@ function App() {
                         Download
                       </button>
                     ) : (
-                      renderCardActions(file, "file")
+                      renderCardActions(
+                        file,
+                        "file"
+                      )
                     )}
                   </div>
 
@@ -954,7 +1114,10 @@ function App() {
                   </span>
 
                   {!sharedFolderId &&
-                    renderCardActions(folder, "folder")}
+                    renderCardActions(
+                      folder,
+                      "folder"
+                    )}
                 </div>
               ))}
 
@@ -988,7 +1151,10 @@ function App() {
                       Download
                     </button>
                   ) : (
-                    renderCardActions(file, "file")
+                    renderCardActions(
+                      file,
+                      "file"
+                    )
                   )}
                 </div>
               ))}
@@ -1003,7 +1169,9 @@ function App() {
     return (
       <section>
         <div className="mb-6">
-          <h3 className="text-2xl font-bold">Trash</h3>
+          <h3 className="text-2xl font-bold">
+            Trash
+          </h3>
 
           <p className="mt-1 text-sm text-gray-400">
             Deleted files and folders
@@ -1011,7 +1179,7 @@ function App() {
         </div>
 
         {filteredTrashFiles.length === 0 &&
-        filteredTrashFolders.length === 0 ? (
+          filteredTrashFolders.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-gray-200 bg-white px-6 py-20 text-center">
             <Trash2
               size={40}
@@ -1041,7 +1209,9 @@ function App() {
                   <button
                     type="button"
                     onClick={() => {
-                      handleRestoreFolder(folder.id);
+                      handleRestoreFolder(
+                        folder.id
+                      );
                     }}
                     className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
                     title="Restore"
@@ -1073,7 +1243,9 @@ function App() {
                   <button
                     type="button"
                     onClick={() => {
-                      handleRestoreFile(file.id);
+                      handleRestoreFile(
+                        file.id
+                      );
                     }}
                     className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
                     title="Restore"
@@ -1111,7 +1283,7 @@ function App() {
         </div>
 
         {filteredStarredFiles.length === 0 &&
-        filteredStarredFolders.length === 0 ? (
+          filteredStarredFolders.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-gray-200 bg-white px-6 py-20 text-center">
             <Star
               size={40}
@@ -1128,31 +1300,36 @@ function App() {
           </div>
         ) : (
           <div className="grid grid-cols-4 gap-5">
-            {filteredStarredFolders.map((folder) => (
-              <div
-                key={`starred-folder-${folder.id}`}
-                className="cursor-pointer rounded-3xl border border-black/5 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
-                onClick={() => {
-                  openFolder(folder);
-                }}
-              >
-                <div className="mb-8 flex items-center justify-between">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#fff4df] text-[#e69b26]">
-                    <Folder size={22} />
+            {filteredStarredFolders.map(
+              (folder) => (
+                <div
+                  key={`starred-folder-${folder.id}`}
+                  className="cursor-pointer rounded-3xl border border-black/5 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+                  onClick={() => {
+                    openFolder(folder);
+                  }}
+                >
+                  <div className="mb-8 flex items-center justify-between">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#fff4df] text-[#e69b26]">
+                      <Folder size={22} />
+                    </div>
+
+                    {renderCardActions(
+                      folder,
+                      "folder"
+                    )}
                   </div>
 
-                  {renderCardActions(folder, "folder")}
+                  <h4 className="truncate text-sm font-semibold">
+                    {folder.name}
+                  </h4>
+
+                  <p className="mt-1 text-xs text-gray-400">
+                    Folder
+                  </p>
                 </div>
-
-                <h4 className="truncate text-sm font-semibold">
-                  {folder.name}
-                </h4>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  Folder
-                </p>
-              </div>
-            ))}
+              )
+            )}
 
             {filteredStarredFiles.map((file) => (
               <div
@@ -1164,7 +1341,10 @@ function App() {
                     {getFileIcon(file.name)}
                   </div>
 
-                  {renderCardActions(file, "file")}
+                  {renderCardActions(
+                    file,
+                    "file"
+                  )}
                 </div>
 
                 <h4 className="truncate text-sm font-semibold">
@@ -1222,7 +1402,8 @@ function App() {
               >
                 <div className="mb-8 flex items-center justify-between">
                   <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#e8f8f0] text-[#38a169]">
-                    {item.resource_type === "folder" ? (
+                    {item.resource_type ===
+                      "folder" ? (
                       <Folder size={22} />
                     ) : (
                       getFileIcon(item.name)
@@ -1239,7 +1420,8 @@ function App() {
                 </h4>
 
                 <p className="mt-1 text-xs text-gray-400">
-                  {item.resource_type === "folder"
+                  {item.resource_type ===
+                    "folder"
                     ? "Shared folder"
                     : formatSize(item.size)}
                 </p>
@@ -1404,8 +1586,8 @@ function App() {
                     ? "Starred"
                     : folderPath.length > 0
                       ? folderPath[
-                          folderPath.length - 1
-                        ].name
+                        folderPath.length - 1
+                      ].name
                       : "My Drive"}
             </h2>
           </div>
@@ -1494,8 +1676,8 @@ function App() {
             {!shareItem ? (
               <div>
                 <p className="mb-4 text-sm text-gray-500">
-                  Choose a file or folder from your Drive
-                  using its Share icon.
+                  Choose a file or folder from
+                  your Drive using its Share icon.
                 </p>
 
                 <button
@@ -1518,7 +1700,9 @@ function App() {
                   type="email"
                   value={shareEmail}
                   onChange={(event) => {
-                    setShareEmail(event.target.value);
+                    setShareEmail(
+                      event.target.value
+                    );
                   }}
                   placeholder="friend@example.com"
                   className="mb-5 w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#6d5dfc]"
@@ -1531,7 +1715,9 @@ function App() {
                 <select
                   value={shareRole}
                   onChange={(event) => {
-                    setShareRole(event.target.value);
+                    setShareRole(
+                      event.target.value
+                    );
                   }}
                   className="mb-6 w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm outline-none"
                 >
@@ -1550,7 +1736,9 @@ function App() {
                   disabled={sharing}
                   className="w-full rounded-2xl bg-[#6d5dfc] px-4 py-3 font-semibold text-white transition hover:bg-[#5e4ee8] disabled:opacity-50"
                 >
-                  {sharing ? "Sharing..." : "Share"}
+                  {sharing
+                    ? "Sharing..."
+                    : "Share"}
                 </button>
               </>
             )}
