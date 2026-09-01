@@ -56,6 +56,9 @@ function App() {
   const [shareItem, setShareItem] = useState(null);
   const [sharing, setSharing] = useState(false);
 
+  const [publicLink, setPublicLink] = useState("");
+  const [creatingLink, setCreatingLink] = useState(false);
+
   useEffect(() => {
     loadData();
   }, [currentFolderId, currentPage]);
@@ -93,30 +96,97 @@ function App() {
         api.get("/shares/with-me"),
       ]);
 
-      setFiles(filesResponse.data || []);
-      setFolders(foldersResponse.data || []);
+      setFiles(
+        Array.isArray(filesResponse.data)
+          ? filesResponse.data
+          : []
+      );
 
-      setTrashFiles(trashResponse.data?.files || []);
-      setTrashFolders(trashResponse.data?.folders || []);
+      setFolders(
+        Array.isArray(foldersResponse.data)
+          ? foldersResponse.data
+          : []
+      );
 
-      setStarredFiles(starredResponse.data?.files || []);
-      setStarredFolders(starredResponse.data?.folders || []);
+      setTrashFiles(
+        Array.isArray(trashResponse.data?.files)
+          ? trashResponse.data.files
+          : []
+      );
 
-      setSharedItems(sharedResponse.data || []);
+      setTrashFolders(
+        Array.isArray(trashResponse.data?.folders)
+          ? trashResponse.data.folders
+          : []
+      );
+
+      setStarredFiles(
+        Array.isArray(starredResponse.data?.files)
+          ? starredResponse.data.files
+          : []
+      );
+
+      setStarredFolders(
+        Array.isArray(starredResponse.data?.folders)
+          ? starredResponse.data.folders
+          : []
+      );
+
+      setSharedItems(
+        Array.isArray(sharedResponse.data)
+          ? sharedResponse.data
+          : []
+      );
     } catch (err) {
-      console.error(err);
+      console.error("Load data error:", err);
 
-      if (err.response?.data) {
-        setError(
-          err.response.data.detail ||
+      setError(
+        getErrorMessage(
+          err,
           "Could not load your CloudDrive data."
-        );
-      } else {
-        setError("Could not connect to the backend.");
-      }
+        )
+      );
     } finally {
       setLoading(false);
     }
+  }
+
+  function getErrorMessage(err, fallback) {
+    const detail = err?.response?.data?.detail;
+
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => {
+          if (typeof item === "string") {
+            return item;
+          }
+
+          if (item && typeof item === "object") {
+            return item.msg || "Invalid request.";
+          }
+
+          return "Invalid request.";
+        })
+        .join(", ");
+    }
+
+    if (typeof detail === "string") {
+      return detail;
+    }
+
+    if (detail && typeof detail === "object") {
+      return detail.msg || fallback;
+    }
+
+    if (typeof err?.response?.data === "string") {
+      return err.response.data;
+    }
+
+    if (err?.message) {
+      return err.message;
+    }
+
+    return fallback;
   }
 
   async function openFolder(folder) {
@@ -129,10 +199,19 @@ function App() {
           `/shared/folders/${folder.id}`
         );
 
-        const data = response.data;
+        const data = response.data || {};
 
-        setFiles(data.files || []);
-        setFolders(data.folders || []);
+        setFiles(
+          Array.isArray(data.files)
+            ? data.files
+            : []
+        );
+
+        setFolders(
+          Array.isArray(data.folders)
+            ? data.folders
+            : []
+        );
 
         setSharedFolderId(folder.id);
         setCurrentFolderId(folder.id);
@@ -145,11 +224,16 @@ function App() {
           },
         ]);
       } catch (err) {
-        console.error(err);
+        console.error(
+          "Open shared folder error:",
+          err
+        );
 
         setError(
-          err.response?.data?.detail ||
-          "Could not open the shared folder."
+          getErrorMessage(
+            err,
+            "Could not open the shared folder."
+          )
         );
       } finally {
         setLoading(false);
@@ -174,6 +258,7 @@ function App() {
     setFolderPath([]);
     setCurrentFolderId(null);
     setSharedFolderId(null);
+    setCurrentPage("drive");
   }
 
   function goToBreadcrumb(index) {
@@ -188,9 +273,13 @@ function App() {
 
     setFolderPath(newPath);
 
-    setCurrentFolderId(
-      newPath[newPath.length - 1].id
-    );
+    if (newPath.length === 0) {
+      setCurrentFolderId(null);
+    } else {
+      setCurrentFolderId(
+        newPath[newPath.length - 1].id
+      );
+    }
 
     setCurrentPage("drive");
   }
@@ -219,7 +308,7 @@ function App() {
   }
 
   async function handleUpload(event) {
-    const selectedFile = event.target.files[0];
+    const selectedFile = event.target.files?.[0];
 
     if (!selectedFile) {
       return;
@@ -237,17 +326,23 @@ function App() {
           ? {}
           : { folder_id: currentFolderId };
 
-      await api.post("/files/upload", formData, {
-        params,
-      });
+      await api.post(
+        "/files/upload",
+        formData,
+        {
+          params,
+        }
+      );
 
       await loadData();
     } catch (err) {
-      console.error(err);
+      console.error("Upload error:", err);
 
       setError(
-        err.response?.data?.detail ||
-        "Upload failed. Please try again."
+        getErrorMessage(
+          err,
+          "Upload failed. Please try again."
+        )
       );
     } finally {
       setUploading(false);
@@ -267,13 +362,14 @@ function App() {
       "Enter folder name:"
     );
 
-    if (!folderName) {
+    if (folderName === null) {
       return;
     }
 
     const name = folderName.trim();
 
     if (!name) {
+      setError("Folder name cannot be empty.");
       return;
     }
 
@@ -288,11 +384,16 @@ function App() {
 
       await loadData();
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Create folder error:",
+        err
+      );
 
       setError(
-        err.response?.data?.detail ||
-        "Could not create folder."
+        getErrorMessage(
+          err,
+          "Could not create folder."
+        )
       );
     } finally {
       setCreatingFolder(false);
@@ -303,15 +404,22 @@ function App() {
     try {
       setError("");
 
-      await api.patch(`/files/${fileId}/restore`);
+      await api.patch(
+        `/files/${fileId}/restore`
+      );
 
       await loadData();
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Restore file error:",
+        err
+      );
 
       setError(
-        err.response?.data?.detail ||
-        "Could not restore file."
+        getErrorMessage(
+          err,
+          "Could not restore file."
+        )
       );
     }
   }
@@ -326,11 +434,16 @@ function App() {
 
       await loadData();
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Restore folder error:",
+        err
+      );
 
       setError(
-        err.response?.data?.detail ||
-        "Could not restore folder."
+        getErrorMessage(
+          err,
+          "Could not restore folder."
+        )
       );
     }
   }
@@ -362,18 +475,32 @@ function App() {
 
       await loadData();
     } catch (err) {
-      console.error(err);
+      console.error("Delete error:", err);
 
       setError(
-        err.response?.data?.detail ||
-        "Could not delete this item."
+        getErrorMessage(
+          err,
+          "Could not delete this item."
+        )
       );
     }
   }
 
+
   async function handleRename(item, type) {
+    if (sharedFolderId !== null) {
+      setError(
+        "You cannot rename items inside a shared folder here."
+      );
+      return;
+    }
+
     const currentName = item.name || "";
-    const newName = window.prompt("Enter new name:", currentName);
+
+    const newName = window.prompt(
+      "Enter new name:",
+      currentName
+    );
 
     if (newName === null) {
       return;
@@ -390,32 +517,37 @@ function App() {
       setError("");
 
       if (type === "file") {
-        await api.patch(`/files/${item.id}/rename`, {
-          name: name,
-        });
+        await api.patch(
+          `/files/${item.id}/rename`,
+          null,
+          {
+            params: {
+              name,
+            },
+          }
+        );
       } else {
-        await api.patch(`/folders/${item.id}/rename`, {
-          name: name,
-        });
+        await api.patch(
+          `/folders/${item.id}/rename`,
+          null,
+          {
+            params: {
+              name,
+            },
+          }
+        );
       }
 
       await loadData();
     } catch (err) {
       console.error("Rename error:", err);
 
-      const detail = err.response?.data?.detail;
-
-      if (Array.isArray(detail)) {
-        setError(
-          detail
-            .map((error) => error.msg || "Invalid rename request.")
-            .join(", ")
-        );
-      } else if (typeof detail === "string") {
-        setError(detail);
-      } else {
-        setError("Could not rename this item.");
-      }
+      setError(
+        getErrorMessage(
+          err,
+          "Could not rename this item."
+        )
+      );
     }
   }
 
@@ -458,11 +590,16 @@ function App() {
 
       await loadData();
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Star error:",
+        err
+      );
 
       setError(
-        err.response?.data?.detail ||
-        "Could not update star."
+        getErrorMessage(
+          err,
+          "Could not update star."
+        )
       );
     }
   }
@@ -495,6 +632,8 @@ function App() {
 
     setShareEmail("");
     setShareRole("viewer");
+    setPublicLink("");
+    setError("");
     setShowShareModal(true);
   }
 
@@ -506,7 +645,9 @@ function App() {
     const email = shareEmail.trim();
 
     if (!email) {
-      setError("Please enter an email address.");
+      setError(
+        "Please enter an email address."
+      );
       return;
     }
 
@@ -515,7 +656,8 @@ function App() {
       setError("");
 
       await api.post("/shares", {
-        resource_type: shareItem.resource_type,
+        resource_type:
+          shareItem.resource_type,
         resource_id: shareItem.id,
         shared_with_email: email,
         role: shareRole,
@@ -523,19 +665,75 @@ function App() {
 
       setShowShareModal(false);
       setShareEmail("");
+      setShareItem(null);
 
-      window.alert("Shared successfully!");
+      window.alert(
+        "Shared successfully!"
+      );
 
       await loadData();
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Share error:",
+        err
+      );
 
       setError(
-        err.response?.data?.detail ||
-        "Could not share this item."
+        getErrorMessage(
+          err,
+          "Could not share this item."
+        )
       );
     } finally {
       setSharing(false);
+    }
+  }
+
+  async function handleCreatePublicLink() {
+    if (!shareItem) {
+      return;
+    }
+
+    try {
+      setCreatingLink(true);
+      setError("");
+      setPublicLink("");
+
+      const response = await api.post(
+        "/public-link",
+        {
+          resource_type:
+            shareItem.resource_type,
+          resource_id: shareItem.id,
+          expires_in_hours: 24,
+        }
+      );
+
+      const token = response.data?.token;
+
+      if (!token) {
+        throw new Error(
+          "Public link token was not returned."
+        );
+      }
+
+      const link = `${window.location.origin}/public/${token}`;
+
+      setPublicLink(link);
+    } catch (err) {
+      console.error(
+        "Create public link error:",
+        err
+      );
+
+      setError(
+        getErrorMessage(
+          err,
+          "Could not create public link."
+        )
+      );
+    } finally {
+      setCreatingLink(false);
     }
   }
 
@@ -544,8 +742,13 @@ function App() {
       setError("");
       setLoading(true);
 
-      if (item.resource_type === "file") {
-        await handleDownload(item.resource_id);
+      if (
+        item.resource_type ===
+        "file"
+      ) {
+        await handleDownload(
+          item.resource_id
+        );
         return;
       }
 
@@ -553,13 +756,28 @@ function App() {
         `/shared/folders/${item.resource_id}`
       );
 
-      const data = response.data;
+      const data = response.data || {};
 
-      setFiles(data.files || []);
-      setFolders(data.folders || []);
+      setFiles(
+        Array.isArray(data.files)
+          ? data.files
+          : []
+      );
 
-      setSharedFolderId(item.resource_id);
-      setCurrentFolderId(item.resource_id);
+      setFolders(
+        Array.isArray(data.folders)
+          ? data.folders
+          : []
+      );
+
+      setSharedFolderId(
+        item.resource_id
+      );
+
+      setCurrentFolderId(
+        item.resource_id
+      );
+
       setCurrentPage("drive");
 
       setFolderPath([
@@ -572,11 +790,16 @@ function App() {
         },
       ]);
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Open shared item error:",
+        err
+      );
 
       setError(
-        err.response?.data?.detail ||
-        "Could not open the shared folder."
+        getErrorMessage(
+          err,
+          "Could not open the shared folder."
+        )
       );
     } finally {
       setLoading(false);
@@ -600,19 +823,28 @@ function App() {
         );
       }
 
-      const link = document.createElement("a");
+      const link =
+        document.createElement("a");
 
       link.href = downloadUrl;
       link.target = "_blank";
-      link.rel = "noopener noreferrer";
+      link.rel =
+        "noopener noreferrer";
 
+      document.body.appendChild(link);
       link.click();
+      link.remove();
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Download error:",
+        err
+      );
 
       setError(
-        err.response?.data?.detail ||
-        "Could not download the file."
+        getErrorMessage(
+          err,
+          "Could not download the file."
+        )
       );
     }
   }
@@ -622,28 +854,38 @@ function App() {
       return <File size={22} />;
     }
 
-    const parts = filename.split(".");
     const extension =
-      parts[parts.length - 1].toLowerCase();
+      filename
+        .split(".")
+        .pop()
+        ?.toLowerCase();
 
     if (
-      extension === "jpg" ||
-      extension === "jpeg" ||
-      extension === "png" ||
-      extension === "gif" ||
-      extension === "webp" ||
-      extension === "svg"
+      [
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "webp",
+        "svg",
+      ].includes(extension)
     ) {
-      return <ImageIcon size={22} />;
+      return (
+        <ImageIcon size={22} />
+      );
     }
 
     if (
-      extension === "pdf" ||
-      extension === "doc" ||
-      extension === "docx" ||
-      extension === "txt"
+      [
+        "pdf",
+        "doc",
+        "docx",
+        "txt",
+      ].includes(extension)
     ) {
-      return <FileText size={22} />;
+      return (
+        <FileText size={22} />
+      );
     }
 
     return <File size={22} />;
@@ -659,10 +901,15 @@ function App() {
     }
 
     if (bytes < 1024 * 1024) {
-      return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(
+        bytes / 1024
+      ).toFixed(1)} KB`;
     }
 
-    if (bytes < 1024 * 1024 * 1024) {
+    if (
+      bytes <
+      1024 * 1024 * 1024
+    ) {
       return `${(
         bytes /
         (1024 * 1024)
@@ -676,77 +923,79 @@ function App() {
   }
 
   function logout() {
-    localStorage.removeItem("token");
-    window.location.href = "/login";
+    localStorage.removeItem(
+      "token"
+    );
+
+    window.location.href =
+      "/login";
   }
 
-  const searchText = search.toLowerCase();
+  const searchText =
+    search.toLowerCase();
 
-  const filteredFiles = files.filter((file) => {
-    return (
-      file.name &&
-      file.name.toLowerCase().includes(searchText)
-    );
-  });
-
-  const filteredFolders = folders.filter((folder) => {
-    return (
-      folder.name &&
-      folder.name.toLowerCase().includes(searchText)
-    );
-  });
-
-  const filteredTrashFiles = trashFiles.filter(
-    (file) => {
-      return (
+  const filteredFiles =
+    files.filter(
+      (file) =>
         file.name &&
         file.name
           .toLowerCase()
           .includes(searchText)
-      );
-    }
-  );
+    );
 
-  const filteredTrashFolders = trashFolders.filter(
-    (folder) => {
-      return (
+  const filteredFolders =
+    folders.filter(
+      (folder) =>
         folder.name &&
         folder.name
           .toLowerCase()
           .includes(searchText)
-      );
-    }
-  );
+    );
+
+  const filteredTrashFiles =
+    trashFiles.filter(
+      (file) =>
+        file.name &&
+        file.name
+          .toLowerCase()
+          .includes(searchText)
+    );
+
+  const filteredTrashFolders =
+    trashFolders.filter(
+      (folder) =>
+        folder.name &&
+        folder.name
+          .toLowerCase()
+          .includes(searchText)
+    );
 
   const filteredStarredFiles =
-    starredFiles.filter((file) => {
-      return (
+    starredFiles.filter(
+      (file) =>
         file.name &&
         file.name
           .toLowerCase()
           .includes(searchText)
-      );
-    });
+    );
 
   const filteredStarredFolders =
-    starredFolders.filter((folder) => {
-      return (
+    starredFolders.filter(
+      (folder) =>
         folder.name &&
         folder.name
           .toLowerCase()
           .includes(searchText)
-      );
-    });
+    );
 
   const filteredSharedItems =
-    sharedItems.filter((item) => {
-      return (
+    sharedItems.filter(
+      (item) =>
         item.name &&
         item.name
           .toLowerCase()
           .includes(searchText)
-      );
-    });
+    );
 
   function renderBreadcrumb() {
     if (folderPath.length === 0) {
@@ -764,7 +1013,9 @@ function App() {
           Back
         </button>
 
-        <span className="text-gray-300">|</span>
+        <span className="text-gray-300">
+          |
+        </span>
 
         <button
           type="button"
@@ -774,29 +1025,38 @@ function App() {
           My Drive
         </button>
 
-        {folderPath.map((crumb, index) => (
-          <span
-            key={`crumb-${crumb.id}`}
-            className="flex items-center gap-2"
-          >
-            <span className="text-gray-300">/</span>
-
-            <button
-              type="button"
-              onClick={() => {
-                goToBreadcrumb(index);
-              }}
-              className="hover:text-[#6d5dfc]"
+        {folderPath.map(
+          (crumb, index) => (
+            <span
+              key={`crumb-${crumb.id}`}
+              className="flex items-center gap-2"
             >
-              {crumb.name}
-            </button>
-          </span>
-        ))}
+              <span className="text-gray-300">
+                /
+              </span>
+
+              <button
+                type="button"
+                onClick={() =>
+                  goToBreadcrumb(
+                    index
+                  )
+                }
+                className="hover:text-[#6d5dfc]"
+              >
+                {crumb.name}
+              </button>
+            </span>
+          )
+        )}
       </div>
     );
   }
 
-  function renderCardActions(item, type) {
+  function renderCardActions(
+    item,
+    type
+  ) {
     const starred =
       type === "file"
         ? isFileStarred(item.id)
@@ -805,16 +1065,16 @@ function App() {
     return (
       <div
         className="flex items-center gap-2"
-        onClick={(event) => {
-          event.stopPropagation();
-        }}
+        onClick={(event) =>
+          event.stopPropagation()
+        }
       >
         {type === "file" && (
           <button
             type="button"
-            onClick={() => {
-              handleDownload(item.id);
-            }}
+            onClick={() =>
+              handleDownload(item.id)
+            }
             title="Download"
             className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
           >
@@ -824,10 +1084,17 @@ function App() {
 
         <button
           type="button"
-          onClick={() => {
-            handleToggleStar(item, type);
-          }}
-          title={starred ? "Unstar" : "Star"}
+          onClick={() =>
+            handleToggleStar(
+              item,
+              type
+            )
+          }
+          title={
+            starred
+              ? "Unstar"
+              : "Star"
+          }
           className="rounded-lg p-1 hover:bg-gray-100"
         >
           <Star
@@ -842,9 +1109,12 @@ function App() {
 
         <button
           type="button"
-          onClick={() => {
-            openShare(item, type);
-          }}
+          onClick={() =>
+            openShare(
+              item,
+              type
+            )
+          }
           title="Share"
           className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
         >
@@ -853,9 +1123,12 @@ function App() {
 
         <button
           type="button"
-          onClick={() => {
-            handleRename(item, type);
-          }}
+          onClick={() =>
+            handleRename(
+              item,
+              type
+            )
+          }
           title="Rename"
           className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
         >
@@ -864,9 +1137,12 @@ function App() {
 
         <button
           type="button"
-          onClick={() => {
-            handleDelete(item, type);
-          }}
+          onClick={() =>
+            handleDelete(
+              item,
+              type
+            )
+          }
           title="Delete"
           className="rounded-lg p-1"
         >
@@ -891,7 +1167,9 @@ function App() {
                 <input
                   type="file"
                   className="hidden"
-                  onChange={handleUpload}
+                  onChange={
+                    handleUpload
+                  }
                   disabled={uploading}
                 />
 
@@ -912,8 +1190,12 @@ function App() {
 
               <button
                 type="button"
-                onClick={handleCreateFolder}
-                disabled={creatingFolder}
+                onClick={
+                  handleCreateFolder
+                }
+                disabled={
+                  creatingFolder
+                }
                 className="rounded-3xl border border-black/5 bg-white p-6 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-md"
               >
                 <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#fff4df] text-[#e69b26]">
@@ -934,8 +1216,12 @@ function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setShowShareModal(true);
+                  setShowShareModal(
+                    true
+                  );
                   setShareItem(null);
+                  setPublicLink("");
+                  setError("");
                 }}
                 className="rounded-3xl border border-black/5 bg-white p-6 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-md"
               >
@@ -973,9 +1259,9 @@ function App() {
             <div className="flex rounded-xl border border-black/5 bg-white p-1 shadow-sm">
               <button
                 type="button"
-                onClick={() => {
-                  setView("grid");
-                }}
+                onClick={() =>
+                  setView("grid")
+                }
                 className="rounded-lg p-2"
                 title="Grid view"
               >
@@ -984,9 +1270,9 @@ function App() {
 
               <button
                 type="button"
-                onClick={() => {
-                  setView("list");
-                }}
+                onClick={() =>
+                  setView("list")
+                }
                 className="rounded-lg p-2"
                 title="List view"
               >
@@ -1014,18 +1300,119 @@ function App() {
             </div>
           ) : view === "grid" ? (
             <div className="grid grid-cols-4 gap-5">
-              {filteredFolders.map((folder) => (
-                <div
-                  key={`folder-${folder.id}`}
-                  className="cursor-pointer rounded-3xl border border-black/5 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
-                  onClick={() => {
-                    openFolder(folder);
-                  }}
-                >
-                  <div className="mb-8 flex items-center justify-between">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#fff4df] text-[#e69b26]">
-                      <Folder size={22} />
+              {filteredFolders.map(
+                (folder) => (
+                  <div
+                    key={`folder-${folder.id}`}
+                    className="cursor-pointer rounded-3xl border border-black/5 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+                    onClick={() =>
+                      openFolder(
+                        folder
+                      )
+                    }
+                  >
+                    <div className="mb-8 flex items-center justify-between">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#fff4df] text-[#e69b26]">
+                        <Folder size={22} />
+                      </div>
+
+                      {!sharedFolderId &&
+                        renderCardActions(
+                          folder,
+                          "folder"
+                        )}
                     </div>
+
+                    <h4 className="truncate text-sm font-semibold">
+                      {folder.name}
+                    </h4>
+
+                    <p className="mt-1 text-xs text-gray-400">
+                      Folder
+                    </p>
+                  </div>
+                )
+              )}
+
+              {filteredFiles.map(
+                (file) => (
+                  <div
+                    key={`file-${file.id}`}
+                    className="rounded-3xl border border-black/5 bg-white p-5 shadow-sm"
+                  >
+                    <div className="mb-8 flex items-center justify-between">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#eeeaff] text-[#6d5dfc]">
+                        {getFileIcon(
+                          file.name
+                        )}
+                      </div>
+
+                      {sharedFolderId ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDownload(
+                              file.id
+                            )
+                          }
+                          className="rounded-xl px-3 py-2 text-xs font-semibold text-[#6d5dfc] hover:bg-[#f0edff]"
+                        >
+                          Download
+                        </button>
+                      ) : (
+                        renderCardActions(
+                          file,
+                          "file"
+                        )
+                      )}
+                    </div>
+
+                    <h4 className="truncate text-sm font-semibold">
+                      {file.name}
+                    </h4>
+
+                    <p className="mt-1 text-xs text-gray-400">
+                      {formatSize(
+                        file.size
+                      )}
+                    </p>
+                  </div>
+                )
+              )}
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-3xl border border-black/5 bg-white shadow-sm">
+              <div className="grid grid-cols-[1fr_160px_100px] border-b border-gray-100 px-6 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <span>Name</span>
+                <span>Size</span>
+                <span></span>
+              </div>
+
+              {filteredFolders.map(
+                (folder) => (
+                  <div
+                    key={`folder-list-${folder.id}`}
+                    className="grid cursor-pointer grid-cols-[1fr_160px_100px] items-center border-b border-gray-50 px-6 py-4 hover:bg-gray-50"
+                    onClick={() =>
+                      openFolder(
+                        folder
+                      )
+                    }
+                  >
+                    <div className="flex items-center gap-3">
+                      <Folder
+                        size={20}
+                        className="text-[#e69b26]"
+                      />
+
+                      <span className="text-sm font-medium">
+                        {folder.name}
+                      </span>
+                    </div>
+
+                    <span className="text-sm text-gray-400">
+                      Folder
+                    </span>
 
                     {!sharedFolderId &&
                       renderCardActions(
@@ -1033,34 +1420,42 @@ function App() {
                         "folder"
                       )}
                   </div>
+                )
+              )}
 
-                  <h4 className="truncate text-sm font-semibold">
-                    {folder.name}
-                  </h4>
+              {filteredFiles.map(
+                (file) => (
+                  <div
+                    key={`file-list-${file.id}`}
+                    className="grid grid-cols-[1fr_160px_100px] items-center border-b border-gray-50 px-6 py-4"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-[#6d5dfc]">
+                        {getFileIcon(
+                          file.name
+                        )}
+                      </span>
 
-                  <p className="mt-1 text-xs text-gray-400">
-                    Folder
-                  </p>
-                </div>
-              ))}
-
-              {filteredFiles.map((file) => (
-                <div
-                  key={`file-${file.id}`}
-                  className="rounded-3xl border border-black/5 bg-white p-5 shadow-sm"
-                >
-                  <div className="mb-8 flex items-center justify-between">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#eeeaff] text-[#6d5dfc]">
-                      {getFileIcon(file.name)}
+                      <span className="text-sm font-medium">
+                        {file.name}
+                      </span>
                     </div>
+
+                    <span className="text-sm text-gray-400">
+                      {formatSize(
+                        file.size
+                      )}
+                    </span>
 
                     {sharedFolderId ? (
                       <button
                         type="button"
-                        onClick={() => {
-                          handleDownload(file.id);
-                        }}
-                        className="rounded-xl px-3 py-2 text-xs font-semibold text-[#6d5dfc] hover:bg-[#f0edff]"
+                        onClick={() =>
+                          handleDownload(
+                            file.id
+                          )
+                        }
+                        className="text-xs font-semibold text-[#6d5dfc]"
                       >
                         Download
                       </button>
@@ -1071,93 +1466,8 @@ function App() {
                       )
                     )}
                   </div>
-
-                  <h4 className="truncate text-sm font-semibold">
-                    {file.name}
-                  </h4>
-
-                  <p className="mt-1 text-xs text-gray-400">
-                    {formatSize(file.size)}
-                  </p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-3xl border border-black/5 bg-white shadow-sm">
-              <div className="grid grid-cols-[1fr_160px_100px] border-b border-gray-100 px-6 py-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
-                <span>Name</span>
-                <span>Size</span>
-                <span></span>
-              </div>
-
-              {filteredFolders.map((folder) => (
-                <div
-                  key={`folder-list-${folder.id}`}
-                  className="grid cursor-pointer grid-cols-[1fr_160px_100px] items-center border-b border-gray-50 px-6 py-4 hover:bg-gray-50"
-                  onClick={() => {
-                    openFolder(folder);
-                  }}
-                >
-                  <div className="flex items-center gap-3">
-                    <Folder
-                      size={20}
-                      className="text-[#e69b26]"
-                    />
-
-                    <span className="text-sm font-medium">
-                      {folder.name}
-                    </span>
-                  </div>
-
-                  <span className="text-sm text-gray-400">
-                    Folder
-                  </span>
-
-                  {!sharedFolderId &&
-                    renderCardActions(
-                      folder,
-                      "folder"
-                    )}
-                </div>
-              ))}
-
-              {filteredFiles.map((file) => (
-                <div
-                  key={`file-list-${file.id}`}
-                  className="grid grid-cols-[1fr_160px_100px] items-center border-b border-gray-50 px-6 py-4"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-[#6d5dfc]">
-                      {getFileIcon(file.name)}
-                    </span>
-
-                    <span className="text-sm font-medium">
-                      {file.name}
-                    </span>
-                  </div>
-
-                  <span className="text-sm text-gray-400">
-                    {formatSize(file.size)}
-                  </span>
-
-                  {sharedFolderId ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleDownload(file.id);
-                      }}
-                      className="text-xs font-semibold text-[#6d5dfc]"
-                    >
-                      Download
-                    </button>
-                  ) : (
-                    renderCardActions(
-                      file,
-                      "file"
-                    )
-                  )}
-                </div>
-              ))}
+                )
+              )}
             </div>
           )}
         </section>
@@ -1196,73 +1506,81 @@ function App() {
           </div>
         ) : (
           <div className="grid grid-cols-4 gap-5">
-            {filteredTrashFolders.map((folder) => (
-              <div
-                key={`trash-folder-${folder.id}`}
-                className="rounded-3xl border border-black/5 bg-white p-5 shadow-sm"
-              >
-                <div className="mb-6 flex items-center justify-between">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#fff4df] text-[#e69b26]">
-                    <Folder size={22} />
+            {filteredTrashFolders.map(
+              (folder) => (
+                <div
+                  key={`trash-folder-${folder.id}`}
+                  className="rounded-3xl border border-black/5 bg-white p-5 shadow-sm"
+                >
+                  <div className="mb-6 flex items-center justify-between">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#fff4df] text-[#e69b26]">
+                      <Folder size={22} />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRestoreFolder(
+                          folder.id
+                        )
+                      }
+                      className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
+                      title="Restore"
+                    >
+                      <RotateCcw size={18} />
+                    </button>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleRestoreFolder(
-                        folder.id
-                      );
-                    }}
-                    className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
-                    title="Restore"
-                  >
-                    <RotateCcw size={18} />
-                  </button>
+                  <h4 className="truncate text-sm font-semibold">
+                    {folder.name}
+                  </h4>
+
+                  <p className="mt-1 text-xs text-gray-400">
+                    Deleted folder
+                  </p>
                 </div>
+              )
+            )}
 
-                <h4 className="truncate text-sm font-semibold">
-                  {folder.name}
-                </h4>
+            {filteredTrashFiles.map(
+              (file) => (
+                <div
+                  key={`trash-file-${file.id}`}
+                  className="rounded-3xl border border-black/5 bg-white p-5 shadow-sm"
+                >
+                  <div className="mb-6 flex items-center justify-between">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#eeeaff] text-[#6d5dfc]">
+                      {getFileIcon(
+                        file.name
+                      )}
+                    </div>
 
-                <p className="mt-1 text-xs text-gray-400">
-                  Deleted folder
-                </p>
-              </div>
-            ))}
-
-            {filteredTrashFiles.map((file) => (
-              <div
-                key={`trash-file-${file.id}`}
-                className="rounded-3xl border border-black/5 bg-white p-5 shadow-sm"
-              >
-                <div className="mb-6 flex items-center justify-between">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#eeeaff] text-[#6d5dfc]">
-                    {getFileIcon(file.name)}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRestoreFile(
+                          file.id
+                        )
+                      }
+                      className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
+                      title="Restore"
+                    >
+                      <RotateCcw size={18} />
+                    </button>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleRestoreFile(
-                        file.id
-                      );
-                    }}
-                    className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
-                    title="Restore"
-                  >
-                    <RotateCcw size={18} />
-                  </button>
+                  <h4 className="truncate text-sm font-semibold">
+                    {file.name}
+                  </h4>
+
+                  <p className="mt-1 text-xs text-gray-400">
+                    {formatSize(
+                      file.size
+                    )}
+                  </p>
                 </div>
-
-                <h4 className="truncate text-sm font-semibold">
-                  {file.name}
-                </h4>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  {formatSize(file.size)}
-                </p>
-              </div>
-            ))}
+              )
+            )}
           </div>
         )}
       </section>
@@ -1305,9 +1623,11 @@ function App() {
                 <div
                   key={`starred-folder-${folder.id}`}
                   className="cursor-pointer rounded-3xl border border-black/5 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
-                  onClick={() => {
-                    openFolder(folder);
-                  }}
+                  onClick={() =>
+                    openFolder(
+                      folder
+                    )
+                  }
                 >
                   <div className="mb-8 flex items-center justify-between">
                     <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#fff4df] text-[#e69b26]">
@@ -1331,31 +1651,37 @@ function App() {
               )
             )}
 
-            {filteredStarredFiles.map((file) => (
-              <div
-                key={`starred-file-${file.id}`}
-                className="rounded-3xl border border-black/5 bg-white p-5 shadow-sm"
-              >
-                <div className="mb-8 flex items-center justify-between">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#eeeaff] text-[#6d5dfc]">
-                    {getFileIcon(file.name)}
+            {filteredStarredFiles.map(
+              (file) => (
+                <div
+                  key={`starred-file-${file.id}`}
+                  className="rounded-3xl border border-black/5 bg-white p-5 shadow-sm"
+                >
+                  <div className="mb-8 flex items-center justify-between">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#eeeaff] text-[#6d5dfc]">
+                      {getFileIcon(
+                        file.name
+                      )}
+                    </div>
+
+                    {renderCardActions(
+                      file,
+                      "file"
+                    )}
                   </div>
 
-                  {renderCardActions(
-                    file,
-                    "file"
-                  )}
+                  <h4 className="truncate text-sm font-semibold">
+                    {file.name}
+                  </h4>
+
+                  <p className="mt-1 text-xs text-gray-400">
+                    {formatSize(
+                      file.size
+                    )}
+                  </p>
                 </div>
-
-                <h4 className="truncate text-sm font-semibold">
-                  {file.name}
-                </h4>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  {formatSize(file.size)}
-                </p>
-              </div>
-            ))}
+              )
+            )}
           </div>
         )}
       </section>
@@ -1392,41 +1718,51 @@ function App() {
           </div>
         ) : (
           <div className="grid grid-cols-4 gap-5">
-            {filteredSharedItems.map((item) => (
-              <div
-                key={`shared-${item.id}`}
-                className="cursor-pointer rounded-3xl border border-black/5 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
-                onClick={() => {
-                  openSharedItem(item);
-                }}
-              >
-                <div className="mb-8 flex items-center justify-between">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#e8f8f0] text-[#38a169]">
-                    {item.resource_type ===
-                      "folder" ? (
-                      <Folder size={22} />
-                    ) : (
-                      getFileIcon(item.name)
-                    )}
+            {filteredSharedItems.map(
+              (item) => (
+                <div
+                  key={`shared-${item.id}`}
+                  className="cursor-pointer rounded-3xl border border-black/5 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+                  onClick={() =>
+                    openSharedItem(
+                      item
+                    )
+                  }
+                >
+                  <div className="mb-8 flex items-center justify-between">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#e8f8f0] text-[#38a169]">
+                      {item.resource_type ===
+                        "folder" ? (
+                        <Folder size={22} />
+                      ) : (
+                        getFileIcon(
+                          item.name
+                        )
+                      )}
+                    </div>
+
+                    <span className="rounded-full bg-[#f0edff] px-3 py-1 text-xs font-semibold text-[#6253e8]">
+                      {item.role ||
+                        "viewer"}
+                    </span>
                   </div>
 
-                  <span className="rounded-full bg-[#f0edff] px-3 py-1 text-xs font-semibold text-[#6253e8]">
-                    {item.role}
-                  </span>
+                  <h4 className="truncate text-sm font-semibold">
+                    {item.name ||
+                      "Shared item"}
+                  </h4>
+
+                  <p className="mt-1 text-xs text-gray-400">
+                    {item.resource_type ===
+                      "folder"
+                      ? "Shared folder"
+                      : formatSize(
+                        item.size
+                      )}
+                  </p>
                 </div>
-
-                <h4 className="truncate text-sm font-semibold">
-                  {item.name || "Shared item"}
-                </h4>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  {item.resource_type ===
-                    "folder"
-                    ? "Shared folder"
-                    : formatSize(item.size)}
-                </p>
-              </div>
-            ))}
+              )
+            )}
           </div>
         )}
       </section>
@@ -1454,8 +1790,12 @@ function App() {
 
         <button
           type="button"
-          onClick={handleCreateFolder}
-          disabled={creatingFolder}
+          onClick={
+            handleCreateFolder
+          }
+          disabled={
+            creatingFolder
+          }
           className="mb-7 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#6d5dfc] px-4 py-3 font-semibold text-white shadow-lg transition hover:bg-[#5e4ee8] disabled:opacity-50"
         >
           <Plus size={19} />
@@ -1469,12 +1809,12 @@ function App() {
           <button
             type="button"
             onClick={() => {
-              setCurrentPage("drive");
               goBackToRoot();
             }}
             className={
               "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold " +
-              (currentPage === "drive"
+              (currentPage ===
+                "drive"
                 ? "bg-[#f0edff] text-[#6253e8]"
                 : "text-gray-500 hover:bg-gray-50")
             }
@@ -1486,14 +1826,21 @@ function App() {
           <button
             type="button"
             onClick={() => {
-              setCurrentPage("shared");
-              setSharedFolderId(null);
-              setCurrentFolderId(null);
+              setCurrentPage(
+                "shared"
+              );
+              setSharedFolderId(
+                null
+              );
+              setCurrentFolderId(
+                null
+              );
               setFolderPath([]);
             }}
             className={
               "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm " +
-              (currentPage === "shared"
+              (currentPage ===
+                "shared"
                 ? "bg-[#f0edff] font-semibold text-[#6253e8]"
                 : "text-gray-500 hover:bg-gray-50")
             }
@@ -1505,14 +1852,21 @@ function App() {
           <button
             type="button"
             onClick={() => {
-              setCurrentPage("starred");
-              setSharedFolderId(null);
-              setCurrentFolderId(null);
+              setCurrentPage(
+                "starred"
+              );
+              setSharedFolderId(
+                null
+              );
+              setCurrentFolderId(
+                null
+              );
               setFolderPath([]);
             }}
             className={
               "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm " +
-              (currentPage === "starred"
+              (currentPage ===
+                "starred"
                 ? "bg-[#f0edff] font-semibold text-[#6253e8]"
                 : "text-gray-500 hover:bg-gray-50")
             }
@@ -1524,14 +1878,21 @@ function App() {
           <button
             type="button"
             onClick={() => {
-              setCurrentPage("trash");
-              setSharedFolderId(null);
-              setCurrentFolderId(null);
+              setCurrentPage(
+                "trash"
+              );
+              setSharedFolderId(
+                null
+              );
+              setCurrentFolderId(
+                null
+              );
               setFolderPath([]);
             }}
             className={
               "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm " +
-              (currentPage === "trash"
+              (currentPage ===
+                "trash"
                 ? "bg-[#f0edff] font-semibold text-[#6253e8]"
                 : "text-gray-500 hover:bg-gray-50")
             }
@@ -1578,15 +1939,20 @@ function App() {
             </p>
 
             <h2 className="text-3xl font-bold">
-              {currentPage === "trash"
+              {currentPage ===
+                "trash"
                 ? "Trash"
-                : currentPage === "shared"
+                : currentPage ===
+                  "shared"
                   ? "Shared with me"
-                  : currentPage === "starred"
+                  : currentPage ===
+                    "starred"
                     ? "Starred"
-                    : folderPath.length > 0
+                    : folderPath.length >
+                      0
                       ? folderPath[
-                        folderPath.length - 1
+                        folderPath.length -
+                        1
                       ].name
                       : "My Drive"}
             </h2>
@@ -1602,9 +1968,11 @@ function App() {
               type="text"
               placeholder="Search your files..."
               value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-              }}
+              onChange={(event) =>
+                setSearch(
+                  event.target.value
+                )
+              }
               className="w-full bg-transparent text-sm outline-none"
             />
           </div>
@@ -1612,13 +1980,15 @@ function App() {
 
         {error && (
           <div className="mb-5 flex items-center justify-between rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-600">
-            <span>{error}</span>
+            <span>
+              {String(error)}
+            </span>
 
             <button
               type="button"
-              onClick={() => {
-                setError("");
-              }}
+              onClick={() =>
+                setError("")
+              }
               className="ml-4 font-bold"
             >
               ×
@@ -1634,11 +2004,14 @@ function App() {
               Loading your files...
             </p>
           </div>
-        ) : currentPage === "trash" ? (
+        ) : currentPage ===
+          "trash" ? (
           renderTrash()
-        ) : currentPage === "starred" ? (
+        ) : currentPage ===
+          "starred" ? (
           renderStarred()
-        ) : currentPage === "shared" ? (
+        ) : currentPage ===
+          "shared" ? (
           renderShared()
         ) : (
           renderDrive()
@@ -1664,8 +2037,12 @@ function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setShowShareModal(false);
+                  setShowShareModal(
+                    false
+                  );
                   setShareItem(null);
+                  setPublicLink("");
+                  setError("");
                 }}
                 className="rounded-xl p-2 hover:bg-gray-100"
               >
@@ -1682,9 +2059,11 @@ function App() {
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowShareModal(false);
-                  }}
+                  onClick={() =>
+                    setShowShareModal(
+                      false
+                    )
+                  }
                   className="w-full rounded-2xl bg-[#6d5dfc] px-4 py-3 font-semibold text-white"
                 >
                   Choose from Drive
@@ -1699,11 +2078,11 @@ function App() {
                 <input
                   type="email"
                   value={shareEmail}
-                  onChange={(event) => {
+                  onChange={(event) =>
                     setShareEmail(
                       event.target.value
-                    );
-                  }}
+                    )
+                  }
                   placeholder="friend@example.com"
                   className="mb-5 w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[#6d5dfc]"
                 />
@@ -1714,12 +2093,12 @@ function App() {
 
                 <select
                   value={shareRole}
-                  onChange={(event) => {
+                  onChange={(event) =>
                     setShareRole(
                       event.target.value
-                    );
-                  }}
-                  className="mb-6 w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm outline-none"
+                    )
+                  }
+                  className="mb-4 w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm outline-none"
                 >
                   <option value="viewer">
                     Viewer
@@ -1740,6 +2119,66 @@ function App() {
                     ? "Sharing..."
                     : "Share"}
                 </button>
+
+                <div className="my-6 flex items-center gap-3">
+                  <div className="h-px flex-1 bg-gray-200" />
+
+                  <span className="text-xs text-gray-400">
+                    OR
+                  </span>
+
+                  <div className="h-px flex-1 bg-gray-200" />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={
+                    handleCreatePublicLink
+                  }
+                  disabled={
+                    creatingLink
+                  }
+                  className="w-full rounded-2xl border border-[#6d5dfc] px-4 py-3 font-semibold text-[#6d5dfc] transition hover:bg-[#f0edff] disabled:opacity-50"
+                >
+                  {creatingLink
+                    ? "Creating link..."
+                    : "Create public link"}
+                </button>
+
+                {publicLink && (
+                  <div className="mt-4 rounded-2xl bg-[#f7f7fb] p-4">
+                    <p className="mb-2 text-xs font-semibold text-gray-500">
+                      Public link
+                    </p>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={
+                          publicLink
+                        }
+                        readOnly
+                        className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs outline-none"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(publicLink);
+                            window.alert("Link copied!");
+                          } catch (err) {
+                            console.error("Copy error:", err);
+                            setError("Could not copy the link.");
+                          }
+                        }}
+                        className="rounded-xl bg-[#6d5dfc] px-3 py-2 text-xs font-semibold text-white"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
