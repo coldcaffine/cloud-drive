@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import api from "./api"
-
+import { GoogleLogin } from "@react-oauth/google"
 function Login() {
     const navigate = useNavigate()
 
@@ -9,6 +9,7 @@ function Login() {
     const [password, setPassword] = useState("")
     const [error, setError] = useState("")
     const [loading, setLoading] = useState(false)
+    const [googleLoading, setGoogleLoading] = useState(false)
 
     const handleLogin = async (e) => {
         e.preventDefault()
@@ -31,6 +32,32 @@ function Login() {
             )
         } finally {
             setLoading(false)
+        }
+    }
+
+    const handleGoogleLogin = async (credentialResponse) => {
+        setError("")
+        setGoogleLoading(true)
+
+        try {
+            if (!credentialResponse.credential) {
+                throw new Error("Google credential not received")
+            }
+
+            const response = await api.post("/auth/google", {
+                credential: credentialResponse.credential,
+            })
+
+            localStorage.setItem("token", response.data.access_token)
+
+            navigate("/")
+        } catch (err) {
+            setError(
+                err.response?.data?.detail ||
+                "Google login failed. Please try again."
+            )
+        } finally {
+            setGoogleLoading(false)
         }
     }
 
@@ -108,16 +135,42 @@ function Login() {
                         )}
 
 
-                        {/* Button */}
+                        {/* Email Login Button */}
                         <button
                             type="submit"
-                            disabled={loading}
+                            disabled={loading || googleLoading}
                             className="w-full rounded-xl bg-[#6d5dfc] py-3 text-sm font-semibold text-white transition hover:bg-[#5c4de8] disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {loading ? "Signing in..." : "Sign in"}
                         </button>
 
                     </form>
+
+
+                    {/* Divider */}
+                    <div className="my-6 flex items-center gap-3">
+                        <div className="h-px flex-1 bg-[#e5e7ee]" />
+
+                        <span className="text-xs font-medium text-[#a2a7b5]">
+                            OR
+                        </span>
+
+                        <div className="h-px flex-1 bg-[#e5e7ee]" />
+                    </div>
+
+
+                    {/* Google Login */}
+                    <div className="flex justify-center">
+                        <GoogleLogin
+                            onSuccess={handleGoogleLogin}
+                            onError={() => {
+                                setError("Google login failed. Please try again.")
+                            }}
+                            text="signin_with"
+                            size="large"
+                            width="300"
+                        />
+                    </div>
 
 
                     {/* Signup */}
@@ -141,4 +194,5 @@ function Login() {
     )
 }
 
-export default Login
+
+export default LoginWithGoogle
