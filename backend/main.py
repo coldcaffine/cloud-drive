@@ -1,22 +1,25 @@
-from datetime import datetime, timezone, timedelta
-import os
-import secrets
-
-from fastapi import FastAPI, Depends, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from pydantic import BaseModel
-
-from database import Base, engine, SessionLocal
-from models import User, Folder, File, Share, LinkShare
+from supabase import create_client
+from google.auth.transport import requests
+from google.oauth2 import id_token
 from auth import (
     hash_password,
     verify_password,
     create_access_token,
     get_current_user_id,
 )
+from models import User, Folder, File, Share, LinkShare
+from database import Base, engine, SessionLocal
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Depends, HTTPException, UploadFile
+from datetime import datetime, timezone, timedelta
+import os
+import secrets
 
-from supabase import create_client
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 # ============================================================
@@ -26,7 +29,17 @@ from supabase import create_client
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY")
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY
+)
+
+
+# ============================================================
+# GOOGLE LOGIN
+# ============================================================
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 
 # ============================================================
@@ -43,12 +56,18 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 
+# ============================================================
+# CORS
+# ============================================================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:5175",
+        "http://localhost:5176",
+        "https://cloud-drive-frontend.onrender.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -70,81 +89,41 @@ def get_db():
 
 
 # ============================================================
-# PERMISSION HELPERS
+# FILE PERMISSION HELPER
 # ============================================================
 
-def get_file_permission(file_id: int, user_id: int, db: Session):
+def get_file_permission(
+    file_id: int,
+    user_id: int,
+    db: Session
+):
     file = db.query(File).filter(
         File.id == file_id,
-        File.is_deleted == False,
+        File.is_deleted == False
     ).first()
 
     if not file:
         raise HTTPException(
             status_code=404,
-            detail="File not found",
+            detail="File not found"
         )
 
-    # Owner has full access
     if file.owner_id == user_id:
         return file, "owner"
 
-    # Check direct file share
     share = db.query(Share).filter(
         Share.resource_type == "file",
         Share.resource_id == file_id,
-        Share.shared_with_id == user_id,
+        Share.shared_with_id == user_id
     ).first()
 
     if not share:
         raise HTTPException(
             status_code=403,
-            detail="Access denied",
+            detail="Access denied"
         )
 
     return file, share.role
-
-
-def user_has_folder_access(
-    folder_id: int,
-    user_id: int,
-    db: Session,
-):
-    folder = db.query(Folder).filter(
-        Folder.id == folder_id,
-        Folder.is_deleted == False,
-    ).first()
-
-    if not folder:
-        return False
-
-    # Owner has access
-    if folder.owner_id == user_id:
-        return True
-
-    current_folder = folder
-
-    # Check the folder and its parent folders
-    while current_folder:
-
-        share = db.query(Share).filter(
-            Share.resource_type == "folder",
-            Share.resource_id == current_folder.id,
-            Share.shared_with_id == user_id,
-        ).first()
-
-        if share:
-            return True
-
-        if current_folder.parent_id is None:
-            break
-
-        current_folder = db.query(Folder).filter(
-            Folder.id == current_folder.parent_id,
-            Folder.is_deleted == False,
-        ).first()
-
-    return False
 
 
 # ============================================================
@@ -159,6 +138,10 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class GoogleLoginRequest(BaseModel):
+    credential: str
 
 
 class FolderCreateRequest(BaseModel):
@@ -183,15 +166,6 @@ class PublicLinkRequest(BaseModel):
     expires_in_hours: int | None = 24
 
 
-# FIX:
-# React sends rename data as JSON:
-# {
-#     "name": "new name"
-# }
-class RenameRequest(BaseModel):
-    name: str
-
-
 # ============================================================
 # ROOT
 # ============================================================
@@ -200,18 +174,18 @@ class RenameRequest(BaseModel):
 def read_root():
     return {
         "status": "ok",
-        "message": "CloudDrive backend is running",
+        "message": "CloudDrive backend is running"
     }
 
 
 # ============================================================
-# AUTH
+# AUTH — REGISTER
 # ============================================================
 
 @app.post("/auth/register")
 def register(
     payload: RegisterRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db)
 ):
     existing = db.query(User).filter(
         User.email == payload.email
@@ -220,12 +194,12 @@ def register(
     if existing:
         raise HTTPException(
             status_code=400,
-            detail="Email already registered",
+            detail="Email already registered"
         )
 
     new_user = User(
         email=payload.email,
-        hashed_password=hash_password(payload.password),
+        hashed_password=hash_password(payload.password)
     )
 
     db.add(new_user)
@@ -234,14 +208,18 @@ def register(
 
     return {
         "id": new_user.id,
-        "email": new_user.email,
+        "email": new_user.email
     }
 
+
+# ============================================================
+# AUTH — EMAIL LOGIN
+# ============================================================
 
 @app.post("/auth/login")
 def login(
     payload: LoginRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(
         User.email == payload.email
@@ -249,11 +227,11 @@ def login(
 
     if not user or not verify_password(
         payload.password,
-        user.hashed_password,
+        user.hashed_password
     ):
         raise HTTPException(
             status_code=401,
-            detail="Invalid email or password",
+            detail="Invalid email or password"
         )
 
     token = create_access_token({
@@ -262,39 +240,92 @@ def login(
 
     return {
         "access_token": token,
-        "token_type": "bearer",
+        "token_type": "bearer"
     }
 
 
 # ============================================================
-# FOLDERS
+# AUTH — GOOGLE LOGIN
+# ============================================================
+
+@app.post("/auth/google")
+def google_login(
+    payload: GoogleLoginRequest,
+    db: Session = Depends(get_db)
+):
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="Google OAuth is not configured"
+        )
+
+    try:
+        google_data = id_token.verify_oauth2_token(
+            payload.credential,
+            requests.Request(),
+            GOOGLE_CLIENT_ID
+        )
+
+    except ValueError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Google credential"
+        )
+
+    email = google_data.get("email")
+
+    if not email:
+        raise HTTPException(
+            status_code=400,
+            detail="Google account email not found"
+        )
+
+    if not google_data.get("email_verified"):
+        raise HTTPException(
+            status_code=401,
+            detail="Google email is not verified"
+        )
+
+    user = db.query(User).filter(
+        User.email == email
+    ).first()
+
+    if not user:
+        user = User(
+            email=email,
+            hashed_password=hash_password(
+                secrets.token_urlsafe(32)
+            )
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    token = create_access_token({
+        "sub": str(user.id)
+    })
+
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
+
+
+# ============================================================
+# FOLDERS — CREATE
 # ============================================================
 
 @app.post("/folders")
 def create_folder(
     payload: FolderCreateRequest,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
-    # If creating inside another folder,
-    # make sure that folder belongs to the user.
-    if payload.parent_id is not None:
-        parent = db.query(Folder).filter(
-            Folder.id == payload.parent_id,
-            Folder.owner_id == user_id,
-            Folder.is_deleted == False,
-        ).first()
-
-        if not parent:
-            raise HTTPException(
-                status_code=404,
-                detail="Parent folder not found",
-            )
-
     new_folder = Folder(
-        name=payload.name.strip(),
+        name=payload.name,
         owner_id=user_id,
-        parent_id=payload.parent_id,
+        parent_id=payload.parent_id
     )
 
     db.add(new_folder)
@@ -303,19 +334,23 @@ def create_folder(
 
     return {
         "id": new_folder.id,
-        "name": new_folder.name,
+        "name": new_folder.name
     }
 
+
+# ============================================================
+# FOLDERS — LIST
+# ============================================================
 
 @app.get("/folders")
 def list_folders(
     parent_id: int | None = None,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
     query = db.query(Folder).filter(
         Folder.owner_id == user_id,
-        Folder.is_deleted == False,
+        Folder.is_deleted == False
     )
 
     query = query.filter(
@@ -326,140 +361,23 @@ def list_folders(
         {
             "id": folder.id,
             "name": folder.name,
-            "parent_id": folder.parent_id,
+            "parent_id": folder.parent_id
         }
         for folder in query.all()
     ]
 
 
-@app.delete("/folders/{folder_id}")
-def delete_folder(
-    folder_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    folder = db.query(Folder).filter(
-        Folder.id == folder_id,
-        Folder.owner_id == user_id,
-        Folder.is_deleted == False,
-    ).first()
-
-    if not folder:
-        raise HTTPException(
-            status_code=404,
-            detail="Folder not found",
-        )
-
-    folder.is_deleted = True
-
-    db.commit()
-
-    return {
-        "status": "deleted"
-    }
-
-
 # ============================================================
-# FOLDER RENAME
-# ============================================================
-
-@app.patch("/folders/{folder_id}/rename")
-def rename_folder(
-    folder_id: int,
-    payload: RenameRequest,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    folder = db.query(Folder).filter(
-        Folder.id == folder_id,
-        Folder.owner_id == user_id,
-        Folder.is_deleted == False,
-    ).first()
-
-    if not folder:
-        raise HTTPException(
-            status_code=404,
-            detail="Folder not found",
-        )
-
-    name = payload.name.strip()
-
-    if not name:
-        raise HTTPException(
-            status_code=400,
-            detail="Folder name cannot be empty",
-        )
-
-    folder.name = name
-
-    db.commit()
-    db.refresh(folder)
-
-    return {
-        "id": folder.id,
-        "name": folder.name,
-    }
-
-
-# ============================================================
-# FOLDER RESTORE
-# ============================================================
-
-@app.patch("/folders/{folder_id}/restore")
-def restore_folder(
-    folder_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    folder = db.query(Folder).filter(
-        Folder.id == folder_id,
-        Folder.owner_id == user_id,
-        Folder.is_deleted == True,
-    ).first()
-
-    if not folder:
-        raise HTTPException(
-            status_code=404,
-            detail="Deleted folder not found",
-        )
-
-    folder.is_deleted = False
-
-    db.commit()
-
-    return {
-        "id": folder.id,
-        "name": folder.name,
-        "status": "restored",
-    }
-
-
-# ============================================================
-# FILE UPLOAD
+# FILES — UPLOAD
 # ============================================================
 
 @app.post("/files/upload")
 async def upload_file(
     file: UploadFile,
-    folder_id: int | None = None,
+    folder_id: int = None,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
-    # If uploading into a folder,
-    # make sure that folder belongs to the user.
-    if folder_id is not None:
-        folder = db.query(Folder).filter(
-            Folder.id == folder_id,
-            Folder.owner_id == user_id,
-            Folder.is_deleted == False,
-        ).first()
-
-        if not folder:
-            raise HTTPException(
-                status_code=404,
-                detail="Folder not found",
-            )
-
     contents = await file.read()
 
     path = (
@@ -468,23 +386,17 @@ async def upload_file(
         f"{file.filename}"
     )
 
-    try:
-        supabase.storage.from_("files").upload(
-            path,
-            contents,
-        )
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Could not upload file to storage",
-        )
+    supabase.storage.from_("files").upload(
+        path,
+        contents
+    )
 
     new_file = File(
         name=file.filename,
         owner_id=user_id,
         folder_id=folder_id,
         storage_path=path,
-        size=len(contents),
+        size=len(contents)
     )
 
     db.add(new_file)
@@ -493,23 +405,113 @@ async def upload_file(
 
     return {
         "id": new_file.id,
-        "name": new_file.name,
+        "name": new_file.name
     }
 
 
 # ============================================================
-# FILE LIST
+# FOLDERS — DELETE
+# ============================================================
+
+@app.delete("/folders/{folder_id}")
+def delete_folder(
+    folder_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    folder = db.query(Folder).filter(
+        Folder.id == folder_id,
+        Folder.owner_id == user_id
+    ).first()
+
+    if not folder:
+        raise HTTPException(
+            status_code=404,
+            detail="Folder not found"
+        )
+
+    folder.is_deleted = True
+    db.commit()
+
+    return {
+        "status": "deleted"
+    }
+
+
+# ============================================================
+# FILES — DELETE
+# ============================================================
+
+@app.delete("/files/{file_id}")
+def delete_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    file, role = get_file_permission(
+        file_id,
+        user_id,
+        db
+    )
+
+    if role not in ("owner", "editor"):
+        raise HTTPException(
+            status_code=403,
+            detail="Viewer cannot delete files"
+        )
+
+    file.is_deleted = True
+    db.commit()
+
+    return {
+        "status": "deleted"
+    }
+
+
+# ============================================================
+# FOLDERS — RENAME
+# ============================================================
+
+@app.patch("/folders/{folder_id}/rename")
+def rename_folder(
+    folder_id: int,
+    name: str,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    folder = db.query(Folder).filter(
+        Folder.id == folder_id,
+        Folder.owner_id == user_id
+    ).first()
+
+    if not folder:
+        raise HTTPException(
+            status_code=404,
+            detail="Folder not found"
+        )
+
+    folder.name = name
+    db.commit()
+
+    return {
+        "id": folder.id,
+        "name": folder.name
+    }
+
+
+# ============================================================
+# FILES — LIST
 # ============================================================
 
 @app.get("/files")
 def list_files(
-    folder_id: int | None = None,
+    folder_id: int = None,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
     query = db.query(File).filter(
         File.owner_id == user_id,
-        File.is_deleted == False,
+        File.is_deleted == False
     )
 
     if folder_id is not None:
@@ -524,87 +526,14 @@ def list_files(
             "id": file.id,
             "name": file.name,
             "folder_id": file.folder_id,
-            "size": file.size,
+            "size": file.size
         }
         for file in files
     ]
 
 
 # ============================================================
-# FILE DELETE
-# ============================================================
-
-@app.delete("/files/{file_id}")
-def delete_file(
-    file_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    file, role = get_file_permission(
-        file_id,
-        user_id,
-        db,
-    )
-
-    if role not in ("owner", "editor"):
-        raise HTTPException(
-            status_code=403,
-            detail="Viewer cannot delete files",
-        )
-
-    file.is_deleted = True
-
-    db.commit()
-
-    return {
-        "status": "deleted"
-    }
-
-
-# ============================================================
-# FILE RENAME
-# ============================================================
-
-@app.patch("/files/{file_id}/rename")
-def rename_file(
-    file_id: int,
-    payload: RenameRequest,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    file, role = get_file_permission(
-        file_id,
-        user_id,
-        db,
-    )
-
-    if role not in ("owner", "editor"):
-        raise HTTPException(
-            status_code=403,
-            detail="Viewer cannot rename files",
-        )
-
-    name = payload.name.strip()
-
-    if not name:
-        raise HTTPException(
-            status_code=400,
-            detail="File name cannot be empty",
-        )
-
-    file.name = name
-
-    db.commit()
-    db.refresh(file)
-
-    return {
-        "id": file.id,
-        "name": file.name,
-    }
-
-
-# ============================================================
-# FILE MOVE
+# FILES — MOVE
 # ============================================================
 
 @app.patch("/files/{file_id}/move")
@@ -612,128 +541,67 @@ def move_file(
     file_id: int,
     payload: FileMoveRequest,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
     file, role = get_file_permission(
         file_id,
         user_id,
-        db,
+        db
     )
 
     if role not in ("owner", "editor"):
         raise HTTPException(
             status_code=403,
-            detail="Viewer cannot move files",
+            detail="Viewer cannot move files"
         )
 
-    if payload.folder_id is not None:
-        folder = db.query(Folder).filter(
-            Folder.id == payload.folder_id,
-            Folder.owner_id == user_id,
-            Folder.is_deleted == False,
-        ).first()
-
-        if not folder:
-            raise HTTPException(
-                status_code=404,
-                detail="Destination folder not found",
-            )
-
     file.folder_id = payload.folder_id
-
     db.commit()
 
     return {
         "id": file.id,
-        "folder_id": file.folder_id,
+        "folder_id": file.folder_id
     }
 
 
 # ============================================================
-# FILE DOWNLOAD
-# ============================================================
-
-@app.get("/files/{file_id}/download")
-def download_file(
-    file_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    file, role = get_file_permission(
-        file_id,
-        user_id,
-        db,
-    )
-
-    try:
-        result = supabase.storage.from_(
-            "files"
-        ).create_signed_url(
-            file.storage_path,
-            3600,
-        )
-
-        return {
-            "id": file.id,
-            "name": file.name,
-            "download_url": result["signedURL"],
-        }
-
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Could not generate download URL",
-        )
-
-
-# ============================================================
-# SHARING
+# SHARING — CREATE
 # ============================================================
 
 @app.post("/shares")
 def create_share(
     payload: ShareCreateRequest,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
-    if payload.resource_type not in (
-        "file",
-        "folder",
-    ):
+    if payload.resource_type not in ("file", "folder"):
         raise HTTPException(
             status_code=400,
-            detail="resource_type must be 'file' or 'folder'",
+            detail="resource_type must be 'file' or 'folder'"
         )
 
-    if payload.role not in (
-        "viewer",
-        "editor",
-    ):
+    if payload.role not in ("viewer", "editor"):
         raise HTTPException(
             status_code=400,
-            detail="role must be 'viewer' or 'editor'",
+            detail="role must be 'viewer' or 'editor'"
         )
 
     if payload.resource_type == "file":
-
         resource = db.query(File).filter(
             File.id == payload.resource_id,
-            File.owner_id == user_id,
-            File.is_deleted == False,
+            File.owner_id == user_id
         ).first()
 
     else:
-
         resource = db.query(Folder).filter(
             Folder.id == payload.resource_id,
-            Folder.owner_id == user_id,
-            Folder.is_deleted == False,
+            Folder.owner_id == user_id
         ).first()
 
     if not resource:
         raise HTTPException(
             status_code=404,
-            detail=f"{payload.resource_type} not found",
+            detail=f"{payload.resource_type} not found"
         )
 
     target_user = db.query(User).filter(
@@ -743,42 +611,21 @@ def create_share(
     if not target_user:
         raise HTTPException(
             status_code=404,
-            detail="User with that email not found",
+            detail="User with that email not found"
         )
 
     if target_user.id == user_id:
         raise HTTPException(
             status_code=400,
-            detail="Cannot share with yourself",
+            detail="Cannot share with yourself"
         )
-
-    # Prevent duplicate share
-    existing_share = db.query(Share).filter(
-        Share.resource_type == payload.resource_type,
-        Share.resource_id == payload.resource_id,
-        Share.shared_with_id == target_user.id,
-    ).first()
-
-    if existing_share:
-        existing_share.role = payload.role
-
-        db.commit()
-        db.refresh(existing_share)
-
-        return {
-            "id": existing_share.id,
-            "resource_type": existing_share.resource_type,
-            "resource_id": existing_share.resource_id,
-            "shared_with_email": payload.shared_with_email,
-            "role": existing_share.role,
-        }
 
     new_share = Share(
         resource_type=payload.resource_type,
         resource_id=payload.resource_id,
         owner_id=user_id,
         shared_with_id=target_user.id,
-        role=payload.role,
+        role=payload.role
     )
 
     db.add(new_share)
@@ -790,77 +637,53 @@ def create_share(
         "resource_type": new_share.resource_type,
         "resource_id": new_share.resource_id,
         "shared_with_email": payload.shared_with_email,
-        "role": new_share.role,
+        "role": new_share.role
     }
 
+
+# ============================================================
+# SHARING — LIST WITH ME
+# ============================================================
 
 @app.get("/shares/with-me")
 def list_shares_with_me(
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
     shares = db.query(Share).filter(
         Share.shared_with_id == user_id
     ).all()
 
-    result = []
-
-    for share in shares:
-
-        item = {
+    return [
+        {
             "id": share.id,
             "resource_type": share.resource_type,
             "resource_id": share.resource_id,
-            "role": share.role,
+            "role": share.role
         }
+        for share in shares
+    ]
 
-        if share.resource_type == "file":
 
-            file = db.query(File).filter(
-                File.id == share.resource_id,
-                File.is_deleted == False,
-            ).first()
-
-            if file:
-                item["name"] = file.name
-                item["size"] = file.size
-                item["folder_id"] = file.folder_id
-            else:
-                continue
-
-        elif share.resource_type == "folder":
-
-            folder = db.query(Folder).filter(
-                Folder.id == share.resource_id,
-                Folder.is_deleted == False,
-            ).first()
-
-            if folder:
-                item["name"] = folder.name
-                item["parent_id"] = folder.parent_id
-            else:
-                continue
-
-        result.append(item)
-
-    return result
-
+# ============================================================
+# SHARING — DELETE
+# ============================================================
 
 @app.delete("/shares/{share_id}")
 def delete_share(
     share_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
     share = db.query(Share).filter(
         Share.id == share_id,
-        Share.owner_id == user_id,
+        Share.owner_id == user_id
     ).first()
 
     if not share:
         raise HTTPException(
             status_code=404,
-            detail="Share not found",
+            detail="Share not found"
         )
 
     db.delete(share)
@@ -872,91 +695,22 @@ def delete_share(
 
 
 # ============================================================
-# SHARED FOLDER ACCESS
-# ============================================================
-
-@app.get("/shared/folders/{folder_id}")
-def open_shared_folder(
-    folder_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    folder = db.query(Folder).filter(
-        Folder.id == folder_id,
-        Folder.is_deleted == False,
-    ).first()
-
-    if not folder:
-        raise HTTPException(
-            status_code=404,
-            detail="Folder not found",
-        )
-
-    if not user_has_folder_access(
-        folder_id,
-        user_id,
-        db,
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail="You do not have access to this folder",
-        )
-
-    child_folders = db.query(Folder).filter(
-        Folder.parent_id == folder_id,
-        Folder.is_deleted == False,
-    ).all()
-
-    files = db.query(File).filter(
-        File.folder_id == folder_id,
-        File.is_deleted == False,
-    ).all()
-
-    return {
-        "folder": {
-            "id": folder.id,
-            "name": folder.name,
-            "owner_id": folder.owner_id,
-        },
-
-        "folders": [
-            {
-                "id": folder.id,
-                "name": folder.name,
-                "parent_id": folder.parent_id,
-            }
-            for folder in child_folders
-        ],
-
-        "files": [
-            {
-                "id": file.id,
-                "name": file.name,
-                "folder_id": file.folder_id,
-                "size": file.size,
-            }
-            for file in files
-        ],
-    }
-
-
-# ============================================================
 # TRASH
 # ============================================================
 
 @app.get("/trash")
 def list_trash(
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
     files = db.query(File).filter(
         File.owner_id == user_id,
-        File.is_deleted == True,
+        File.is_deleted == True
     ).all()
 
     folders = db.query(Folder).filter(
         Folder.owner_id == user_id,
-        Folder.is_deleted == True,
+        Folder.is_deleted == True
     ).all()
 
     return {
@@ -965,19 +719,82 @@ def list_trash(
                 "id": file.id,
                 "name": file.name,
                 "folder_id": file.folder_id,
-                "size": file.size,
+                "size": file.size
             }
             for file in files
         ],
-
         "folders": [
             {
                 "id": folder.id,
                 "name": folder.name,
-                "parent_id": folder.parent_id,
+                "parent_id": folder.parent_id
             }
             for folder in folders
-        ],
+        ]
+    }
+
+
+# ============================================================
+# FILES — RESTORE
+# ============================================================
+
+@app.patch("/files/{file_id}/restore")
+def restore_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    file = db.query(File).filter(
+        File.id == file_id,
+        File.owner_id == user_id,
+        File.is_deleted == True
+    ).first()
+
+    if not file:
+        raise HTTPException(
+            status_code=404,
+            detail="Deleted file not found"
+        )
+
+    file.is_deleted = False
+    db.commit()
+
+    return {
+        "id": file.id,
+        "name": file.name,
+        "status": "restored"
+    }
+
+
+# ============================================================
+# FOLDERS — RESTORE
+# ============================================================
+
+@app.patch("/folders/{folder_id}/restore")
+def restore_folder(
+    folder_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    folder = db.query(Folder).filter(
+        Folder.id == folder_id,
+        Folder.owner_id == user_id,
+        Folder.is_deleted == True
+    ).first()
+
+    if not folder:
+        raise HTTPException(
+            status_code=404,
+            detail="Deleted folder not found"
+        )
+
+    folder.is_deleted = False
+    db.commit()
+
+    return {
+        "id": folder.id,
+        "name": folder.name,
+        "status": "restored"
     }
 
 
@@ -989,20 +806,20 @@ def list_trash(
 def search_items(
     q: str,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
     search_term = f"%{q}%"
 
     files = db.query(File).filter(
         File.owner_id == user_id,
         File.is_deleted == False,
-        File.name.ilike(search_term),
+        File.name.ilike(search_term)
     ).all()
 
     folders = db.query(Folder).filter(
         Folder.owner_id == user_id,
         Folder.is_deleted == False,
-        Folder.name.ilike(search_term),
+        Folder.name.ilike(search_term)
     ).all()
 
     return {
@@ -1011,70 +828,209 @@ def search_items(
                 "id": file.id,
                 "name": file.name,
                 "folder_id": file.folder_id,
-                "size": file.size,
+                "size": file.size
             }
             for file in files
         ],
-
         "folders": [
             {
                 "id": folder.id,
                 "name": folder.name,
-                "parent_id": folder.parent_id,
+                "parent_id": folder.parent_id
             }
             for folder in folders
-        ],
+        ]
     }
 
 
 # ============================================================
-# PUBLIC LINKS
+# FILES — RENAME
 # ============================================================
+
+@app.patch("/files/{file_id}/rename")
+def rename_file(
+    file_id: int,
+    name: str,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    file, role = get_file_permission(
+        file_id,
+        user_id,
+        db
+    )
+
+    if role not in ("owner", "editor"):
+        raise HTTPException(
+            status_code=403,
+            detail="Viewer cannot rename files"
+        )
+
+    if not name.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="File name cannot be empty"
+        )
+
+    file.name = name.strip()
+    db.commit()
+
+    return {
+        "id": file.id,
+        "name": file.name
+    }
+
+
+# ============================================================
+# FILES — DOWNLOAD
+# ============================================================
+
+@app.get("/files/{file_id}/download")
+def download_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    file, role = get_file_permission(
+        file_id,
+        user_id,
+        db
+    )
+
+    try:
+        result = supabase.storage.from_(
+            "files"
+        ).create_signed_url(
+            file.storage_path,
+            3600
+        )
+
+        return {
+            "id": file.id,
+            "name": file.name,
+            "download_url": result["signedURL"]
+        }
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not generate download URL"
+        )
+# STARRED
+# ===========================================
+
+
+@app.post("/files/{file_id}/star")
+def toggle_star(
+    file_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    file = db.query(File).filter(
+        File.id == file_id,
+        File.owner_id == user_id,
+        File.is_deleted == False
+    ).first()
+
+    if not file:
+        raise HTTPException(
+            status_code=404,
+            detail="File not found"
+        )
+
+    file.is_starred = not file.is_starred
+
+    db.commit()
+    db.refresh(file)
+
+    return {
+        "id": file.id,
+        "name": file.name,
+        "is_starred": file.is_starred
+    }
+
+
+@app.post("/folders/{folder_id}/star")
+def toggle_folder_star(
+    folder_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    folder = db.query(Folder).filter(
+        Folder.id == folder_id,
+        Folder.owner_id == user_id,
+        Folder.is_deleted == False
+    ).first()
+
+    if not folder:
+        raise HTTPException(
+            status_code=404,
+            detail="Folder not found"
+        )
+
+    folder.is_starred = not folder.is_starred
+
+    db.commit()
+    db.refresh(folder)
+
+    return {
+        "id": folder.id,
+        "name": folder.name,
+        "is_starred": folder.is_starred
+    }
+
+
+@app.get("/starred")
+def get_starred(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    files = db.query(File).filter(
+        File.owner_id == user_id,
+        File.is_deleted == False,
+        File.is_starred == True
+    ).all()
+
+    return {
+        "files": files,
+        "folders": []
+    }
+
+# ============================================================
+# PUBLIC LINKS — CREATE
+# ============================================================
+
 
 @app.post("/public-link")
 def create_public_link(
     payload: PublicLinkRequest,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
-    if payload.resource_type not in (
-        "file",
-        "folder",
-    ):
+    if payload.resource_type not in ("file", "folder"):
         raise HTTPException(
             status_code=400,
-            detail="resource_type must be 'file' or 'folder'",
+            detail="resource_type must be 'file' or 'folder'"
         )
 
     if payload.resource_type == "file":
-
         resource = db.query(File).filter(
             File.id == payload.resource_id,
             File.owner_id == user_id,
-            File.is_deleted == False,
+            File.is_deleted == False
         ).first()
 
     else:
-
         resource = db.query(Folder).filter(
             Folder.id == payload.resource_id,
             Folder.owner_id == user_id,
-            Folder.is_deleted == False,
+            Folder.is_deleted == False
         ).first()
 
     if not resource:
         raise HTTPException(
             status_code=404,
-            detail=f"{payload.resource_type} not found",
-        )
-
-    if (
-        payload.expires_in_hours is not None
-        and payload.expires_in_hours <= 0
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="expires_in_hours must be greater than 0",
+            detail=f"{payload.resource_type} not found"
         )
 
     token = secrets.token_urlsafe(32)
@@ -1082,6 +1038,13 @@ def create_public_link(
     expires_at = None
 
     if payload.expires_in_hours is not None:
+
+        if payload.expires_in_hours <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="expires_in_hours must be greater than 0"
+            )
+
         expires_at = (
             datetime.now(timezone.utc)
             + timedelta(
@@ -1094,7 +1057,7 @@ def create_public_link(
         resource_id=payload.resource_id,
         owner_id=user_id,
         token=token,
-        expires_at=expires_at,
+        expires_at=expires_at
     )
 
     db.add(link)
@@ -1106,23 +1069,31 @@ def create_public_link(
         "token": link.token,
         "resource_type": link.resource_type,
         "resource_id": link.resource_id,
-        "expires_at": link.expires_at,
+        "expires_at": link.expires_at
     }
 
+
+# ============================================================
+# PUBLIC LINKS — ACCESS
+# ============================================================
 
 @app.get("/public/{token}")
 def access_public_link(
     token: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db)
 ):
-    link = db.query(LinkShare).filter(
-        LinkShare.token == token
-    ).first()
+    link = (
+        db.query(LinkShare)
+        .filter(
+            LinkShare.token == token
+        )
+        .first()
+    )
 
     if not link:
         raise HTTPException(
             status_code=404,
-            detail="Public link not found",
+            detail="Public link not found"
         )
 
     if (
@@ -1131,203 +1102,108 @@ def access_public_link(
     ):
         raise HTTPException(
             status_code=410,
-            detail="Public link has expired",
+            detail="Public link has expired"
         )
 
     if link.resource_type == "file":
 
-        resource = db.query(File).filter(
-            File.id == link.resource_id,
-            File.is_deleted == False,
-        ).first()
+        resource = (
+            db.query(File)
+            .filter(
+                File.id == link.resource_id,
+                File.is_deleted == False
+            )
+            .first()
+        )
 
         if not resource:
             raise HTTPException(
                 status_code=404,
-                detail="File not found",
+                detail="File not found"
             )
 
-        try:
-            result = supabase.storage.from_(
-                "files"
-            ).create_signed_url(
-                resource.storage_path,
-                3600,
+        return {
+            "resource_type": "file",
+            "id": resource.id,
+            "name": resource.name,
+            "size": resource.size,
+            "download_url": (
+                supabase
+                .storage
+                .from_("files")
+                .create_signed_url(
+                    resource.storage_path,
+                    3600
+                )["signedURL"]
             )
+        }
 
-            return {
-                "type": "file",
-                "id": resource.id,
-                "name": resource.name,
-                "download_url": result["signedURL"],
-            }
-
-        except Exception:
-            raise HTTPException(
-                status_code=500,
-                detail="Could not generate public download URL",
-            )
-
-    raise HTTPException(
-        status_code=400,
-        detail="Public folder links are not supported yet",
+    resource = (
+        db.query(Folder)
+        .filter(
+            Folder.id == link.resource_id,
+            Folder.is_deleted == False
+        )
+        .first()
     )
 
+    if not resource:
+        raise HTTPException(
+            status_code=404,
+            detail="Folder not found"
+        )
 
-# ============================================================
+    return {
+        "resource_type": "folder",
+        "id": resource.id,
+        "name": resource.name
+    }
 # STARRED
-# ============================================================
+# ===========================================
+
 
 @app.post("/files/{file_id}/star")
-def star_file(
+def toggle_star(
     file_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
     file = db.query(File).filter(
         File.id == file_id,
         File.owner_id == user_id,
-        File.is_deleted == False,
+        File.is_deleted == False
     ).first()
 
     if not file:
         raise HTTPException(
             status_code=404,
-            detail="File not found",
+            detail="File not found"
         )
 
-    file.is_starred = True
+    file.is_starred = not file.is_starred
 
     db.commit()
     db.refresh(file)
 
     return {
         "id": file.id,
-        "is_starred": file.is_starred,
-    }
-
-
-@app.delete("/files/{file_id}/star")
-def unstar_file(
-    file_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    file = db.query(File).filter(
-        File.id == file_id,
-        File.owner_id == user_id,
-        File.is_deleted == False,
-    ).first()
-
-    if not file:
-        raise HTTPException(
-            status_code=404,
-            detail="File not found",
-        )
-
-    file.is_starred = False
-
-    db.commit()
-    db.refresh(file)
-
-    return {
-        "id": file.id,
-        "is_starred": file.is_starred,
-    }
-
-
-@app.post("/folders/{folder_id}/star")
-def star_folder(
-    folder_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    folder = db.query(Folder).filter(
-        Folder.id == folder_id,
-        Folder.owner_id == user_id,
-        Folder.is_deleted == False,
-    ).first()
-
-    if not folder:
-        raise HTTPException(
-            status_code=404,
-            detail="Folder not found",
-        )
-
-    folder.is_starred = True
-
-    db.commit()
-    db.refresh(folder)
-
-    return {
-        "id": folder.id,
-        "is_starred": folder.is_starred,
-    }
-
-
-@app.delete("/folders/{folder_id}/star")
-def unstar_folder(
-    folder_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    folder = db.query(Folder).filter(
-        Folder.id == folder_id,
-        Folder.owner_id == user_id,
-        Folder.is_deleted == False,
-    ).first()
-
-    if not folder:
-        raise HTTPException(
-            status_code=404,
-            detail="Folder not found",
-        )
-
-    folder.is_starred = False
-
-    db.commit()
-    db.refresh(folder)
-
-    return {
-        "id": folder.id,
-        "is_starred": folder.is_starred,
+        "name": file.name,
+        "is_starred": file.is_starred
     }
 
 
 @app.get("/starred")
-def list_starred(
+def get_starred(
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id)
 ):
     files = db.query(File).filter(
         File.owner_id == user_id,
-        File.is_starred == True,
         File.is_deleted == False,
-    ).all()
-
-    folders = db.query(Folder).filter(
-        Folder.owner_id == user_id,
-        Folder.is_starred == True,
-        Folder.is_deleted == False,
+        File.is_starred == True
     ).all()
 
     return {
-        "files": [
-            {
-                "id": file.id,
-                "name": file.name,
-                "folder_id": file.folder_id,
-                "size": file.size,
-            }
-            for file in files
-        ],
-
-        "folders": [
-            {
-                "id": folder.id,
-                "name": folder.name,
-                "parent_id": folder.parent_id,
-            }
-            for folder in folders
-        ],
+        "files": files,
+        "folders": []
     }
