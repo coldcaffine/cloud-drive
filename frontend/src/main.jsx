@@ -1,34 +1,30 @@
-import { StrictMode } from "react"
-import { createRoot } from "react-dom/client"
-import { BrowserRouter, Routes, Route } from "react-router-dom"
-import { GoogleOAuthProvider } from "@react-oauth/google"
+import React from "react";
+import ReactDOM from "react-dom/client";
+import {
+  BrowserRouter,
+  useLocation,
+} from "react-router-dom";
+import { GoogleOAuthProvider } from "@react-oauth/google";
+import App from "./App";
+import Login from "./Login";
+import "./index.css";
 
-import App from "./App"
-import Login from "./Login"
-import Signup from "./Signup"
-import PublicLink from "./PublicLink"
+function Root() {
+  const location = useLocation();
 
-import "./index.css"
+  if (location.pathname === "/login") {
+    return <Login />;
+  }
 
-createRoot(document.getElementById("root")).render(
-  <StrictMode>
-    <GoogleOAuthProvider clientId="829903513386-b8si1jlqkiebufub8k5m560s5i3g8d74.apps.googleusercontent.com">
+  return <App />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
+    <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
       <BrowserRouter>
-        <Routes>
-
-          <Route path="/" element={<App />} />
-
-          <Route path="/login" element={<Login />} />
-
-          <Route path="/signup" element={<Signup />} />
-
-          <Route
-            path="/public/:token"
-            element={<PublicLink />}
-          />
-
-        </Routes>
+        <Root />
       </BrowserRouter>
     </GoogleOAuthProvider>
-  </StrictMode>
-)
+  </React.StrictMode>
+);

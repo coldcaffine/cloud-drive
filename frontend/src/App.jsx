@@ -308,7 +308,9 @@ function App() {
   }
 
   async function handleUpload(event) {
-    const selectedFile = event.target.files?.[0];
+    const selectedFile =
+      event.target.files?.[0] ||
+      event.dataTransfer?.files?.[0];
 
     if (!selectedFile) {
       return;
@@ -346,7 +348,10 @@ function App() {
       );
     } finally {
       setUploading(false);
-      event.target.value = "";
+
+      if (event.target) {
+        event.target.value = "";
+      }
     }
   }
 
@@ -485,7 +490,6 @@ function App() {
       );
     }
   }
-
 
   async function handleRename(item, type) {
     if (sharedFolderId !== null) {
@@ -1163,30 +1167,44 @@ function App() {
         <section className="mb-10 grid grid-cols-3 gap-5">
           {!sharedFolderId && (
             <>
-              <label className="cursor-pointer rounded-3xl border border-black/5 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-md">
-                <input
-                  type="file"
-                  className="hidden"
-                  onChange={
-                    handleUpload
+              <div
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+
+                  if (!uploading) {
+                    handleUpload(event);
                   }
-                  disabled={uploading}
-                />
+                }}
+                className="cursor-pointer rounded-3xl border-2 border-dashed border-black/10 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:border-[#6d5dfc] hover:shadow-md"
+              >
+                <label className="block cursor-pointer">
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={handleUpload}
+                    disabled={uploading}
+                  />
 
-                <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#eeeaff] text-[#6d5dfc]">
-                  <Upload size={22} />
-                </div>
+                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#eeeaff] text-[#6d5dfc]">
+                    <Upload size={22} />
+                  </div>
 
-                <h3 className="font-semibold">
-                  {uploading
-                    ? "Uploading..."
-                    : "Upload files"}
-                </h3>
+                  <h3 className="font-semibold">
+                    {uploading
+                      ? "Uploading..."
+                      : "Upload files"}
+                  </h3>
 
-                <p className="mt-1 text-sm text-gray-400">
-                  Add files to your drive
-                </p>
-              </label>
+                  <p className="mt-1 text-sm text-gray-400">
+                    Drag & drop files here or click to browse
+                  </p>
+                </label>
+              </div>
 
               <button
                 type="button"

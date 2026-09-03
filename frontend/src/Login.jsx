@@ -12,16 +12,20 @@ function Login() {
     const [googleLoading, setGoogleLoading] = useState(false)
 
     const handleLogin = async (e) => {
+        console.log("LOGIN BUTTON CLICKED")
         e.preventDefault()
 
         setError("")
         setLoading(true)
 
         try {
+            console.log("SENDING LOGIN REQUEST")
+
             const response = await api.post("/auth/login", {
                 email,
                 password,
             })
+            console.log("LOGIN RESPONSE RECEIVED", response.data)
 
             localStorage.setItem("token", response.data.access_token)
 
@@ -195,4 +199,4 @@ function Login() {
 }
 
 
-export default LoginWithGoogle
+export default Login
