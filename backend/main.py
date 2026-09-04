@@ -1,23 +1,30 @@
 from supabase import create_client
 from google.auth.transport import requests
 from google.oauth2 import id_token
+
 from auth import (
     hash_password,
     verify_password,
     create_access_token,
     get_current_user_id,
 )
+
 from models import User, Folder, File, Share, LinkShare
 from database import Base, engine, SessionLocal
+
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException, UploadFile
+
 from datetime import datetime, timezone, timedelta
+
 import os
 import secrets
 
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
@@ -766,6 +773,24 @@ def permanently_delete_file(
             detail="Could not delete file from storage"
         )
 
+    # Delete related shares
+    db.query(Share).filter(
+        Share.resource_type == "file",
+        Share.resource_id == file.id,
+        Share.owner_id == user_id
+    ).delete(
+        synchronize_session=False
+    )
+
+    # Delete related public links
+    db.query(LinkShare).filter(
+        LinkShare.resource_type == "file",
+        LinkShare.resource_id == file.id,
+        LinkShare.owner_id == user_id
+    ).delete(
+        synchronize_session=False
+    )
+
     db.delete(file)
     db.commit()
 
@@ -796,8 +821,191 @@ def permanently_delete_folder(
             detail="Deleted folder not found"
         )
 
-    db.delete(folder)
-    db.commit()
+    try:
+        # ----------------------------------------------------
+        # 1. Find the selected folder and all nested folders
+        # ----------------------------------------------------
+
+        folder_ids = [folder.id]
+        folders_to_check = [folder.id]
+
+        while folders_to_check:
+            current_folder_id = folders_to_check.pop()
+
+            children = db.query(Folder).filter(
+                Folder.parent_id == current_folder_id,
+                Folder.owner_id == user_id
+            ).all()
+
+            for child in children:
+                if child.id not in folder_ids:
+                    folder_ids.append(child.id)
+                    folders_to_check.append(child.id)
+
+        # ----------------------------------------------------
+        # 2. Find every file inside those folders
+        # ----------------------------------------------------
+
+        files = db.query(File).filter(
+            File.owner_id == user_id,
+            File.folder_id.in_(folder_ids)
+        ).all()
+
+        file_ids = [
+            file.id
+            for file in files
+        ]
+
+        # ----------------------------------------------------
+        # 3. Delete files from Supabase Storage
+        # ----------------------------------------------------
+
+        for file in files:
+            try:
+                supabase.storage.from_("files").remove(
+                    [file.storage_path]
+                )
+            except Exception:
+                # If the storage object is already gone,
+                # continue deleting the database records.
+                pass
+
+        # ----------------------------------------------------
+        # 4. Delete file shares
+        # ----------------------------------------------------
+
+        if file_ids:
+            db.query(Share).filter(
+                Share.resource_type == "file",
+                Share.resource_id.in_(file_ids),
+                Share.owner_id == user_id
+            ).delete(
+                synchronize_session=False
+            )
+
+        # ----------------------------------------------------
+        # 5. Delete file public links
+        # ----------------------------------------------------
+
+        if file_ids:
+            db.query(LinkShare).filter(
+                LinkShare.resource_type == "file",
+                LinkShare.resource_id.in_(file_ids),
+                LinkShare.owner_id == user_id
+            ).delete(
+                synchronize_session=False
+            )
+
+        # ----------------------------------------------------
+        # 6. Delete folder shares
+        # ----------------------------------------------------
+
+        db.query(Share).filter(
+            Share.resource_type == "folder",
+            Share.resource_id.in_(folder_ids),
+            Share.owner_id == user_id
+        ).delete(
+            synchronize_session=False
+        )
+
+        # ----------------------------------------------------
+        # 7. Delete folder public links
+        # ----------------------------------------------------
+
+        db.query(LinkShare).filter(
+            LinkShare.resource_type == "folder",
+            LinkShare.resource_id.in_(folder_ids),
+            LinkShare.owner_id == user_id
+        ).delete(
+            synchronize_session=False
+        )
+
+        # ----------------------------------------------------
+        # 8. Delete all files from database
+        # ----------------------------------------------------
+
+        if file_ids:
+            db.query(File).filter(
+                File.id.in_(file_ids),
+                File.owner_id == user_id
+            ).delete(
+                synchronize_session=False
+            )
+
+        # ----------------------------------------------------
+        # 9. Get all folders
+        # ----------------------------------------------------
+
+        folders = db.query(Folder).filter(
+            Folder.id.in_(folder_ids),
+            Folder.owner_id == user_id
+        ).all()
+
+        # ----------------------------------------------------
+        # 10. Calculate folder depth
+        #     Deepest folders must be deleted first
+        # ----------------------------------------------------
+
+        folder_depth = {}
+
+        for current_folder in folders:
+            depth = 0
+            parent_id = current_folder.parent_id
+
+            while parent_id is not None:
+                depth += 1
+
+                parent_folder = next(
+                    (
+                        f
+                        for f in folders
+                        if f.id == parent_id
+                    ),
+                    None
+                )
+
+                if parent_folder is None:
+                    break
+
+                parent_id = parent_folder.parent_id
+
+            folder_depth[current_folder.id] = depth
+
+        folders.sort(
+            key=lambda f: folder_depth.get(
+                f.id,
+                0
+            ),
+            reverse=True
+        )
+
+        # ----------------------------------------------------
+        # 11. Delete folders from deepest to shallowest
+        # ----------------------------------------------------
+
+        for current_folder in folders:
+            db.delete(current_folder)
+
+        # ----------------------------------------------------
+        # 12. Commit everything
+        # ----------------------------------------------------
+
+        db.commit()
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception as e:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not permanently delete folder: "
+                f"{str(e)}"
+            )
+        )
 
     return {
         "status": "permanently deleted"
