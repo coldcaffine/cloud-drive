@@ -1,4 +1,12 @@
-# ☁️ CloudDrive
+## Screenshots
+
+### Login
+
+![CloudDrive Login](screenshots/login.png)
+
+### Dashboard
+
+![CloudDrive Dashboard](screenshots/dashboard.png)# ☁️ CloudDrive
 
 A full-stack cloud file storage and sharing application inspired by the core functionality of Google Drive.
 
@@ -487,3 +495,15 @@ Built as a full-stack cloud storage project using React, FastAPI, PostgreSQL, an
 ## 📄 License
 
 This project is intended primarily as a learning and portfolio project.
+
+---
+
+## Screenshots
+
+### Login
+
+![CloudDrive Login](screenshots/login.png)
+
+### Dashboard
+
+![CloudDrive Dashboard](screenshots/dashboard.png)
