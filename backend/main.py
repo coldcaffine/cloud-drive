@@ -733,6 +733,7 @@ def list_trash(
         ]
     }
 
+
 # ============================================================
 # FILES — PERMANENT DELETE
 # ============================================================
@@ -771,6 +772,38 @@ def permanently_delete_file(
     return {
         "status": "permanently deleted"
     }
+
+
+# ============================================================
+# FOLDERS — PERMANENT DELETE
+# ============================================================
+
+@app.delete("/folders/{folder_id}/permanent")
+def permanently_delete_folder(
+    folder_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    folder = db.query(Folder).filter(
+        Folder.id == folder_id,
+        Folder.owner_id == user_id,
+        Folder.is_deleted == True
+    ).first()
+
+    if not folder:
+        raise HTTPException(
+            status_code=404,
+            detail="Deleted folder not found"
+        )
+
+    db.delete(folder)
+    db.commit()
+
+    return {
+        "status": "permanently deleted"
+    }
+
+
 # ============================================================
 # FILES — RESTORE
 # ============================================================
@@ -953,9 +986,11 @@ def download_file(
             status_code=500,
             detail="Could not generate download URL"
         )
-# STARRED
-# ===========================================
 
+
+# ============================================================
+# STARRED
+# ============================================================
 
 @app.post("/files/{file_id}/star")
 def toggle_star(
@@ -987,6 +1022,10 @@ def toggle_star(
     }
 
 
+# ============================================================
+# FOLDERS — STAR
+# ============================================================
+
 @app.post("/folders/{folder_id}/star")
 def toggle_folder_star(
     folder_id: int,
@@ -1017,6 +1056,10 @@ def toggle_folder_star(
     }
 
 
+# ============================================================
+# STARRED — LIST
+# ============================================================
+
 @app.get("/starred")
 def get_starred(
     db: Session = Depends(get_db),
@@ -1028,15 +1071,21 @@ def get_starred(
         File.is_starred == True
     ).all()
 
+    folders = db.query(Folder).filter(
+        Folder.owner_id == user_id,
+        Folder.is_deleted == False,
+        Folder.is_starred == True
+    ).all()
+
     return {
         "files": files,
-        "folders": []
+        "folders": folders
     }
+
 
 # ============================================================
 # PUBLIC LINKS — CREATE
 # ============================================================
-
 
 @app.post("/public-link")
 def create_public_link(
@@ -1194,53 +1243,4 @@ def access_public_link(
         "resource_type": "folder",
         "id": resource.id,
         "name": resource.name
-    }
-# STARRED
-# ===========================================
-
-
-@app.post("/files/{file_id}/star")
-def toggle_star(
-    file_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
-):
-    file = db.query(File).filter(
-        File.id == file_id,
-        File.owner_id == user_id,
-        File.is_deleted == False
-    ).first()
-
-    if not file:
-        raise HTTPException(
-            status_code=404,
-            detail="File not found"
-        )
-
-    file.is_starred = not file.is_starred
-
-    db.commit()
-    db.refresh(file)
-
-    return {
-        "id": file.id,
-        "name": file.name,
-        "is_starred": file.is_starred
-    }
-
-
-@app.get("/starred")
-def get_starred(
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
-):
-    files = db.query(File).filter(
-        File.owner_id == user_id,
-        File.is_deleted == False,
-        File.is_starred == True
-    ).all()
-
-    return {
-        "files": files,
-        "folders": []
     }
