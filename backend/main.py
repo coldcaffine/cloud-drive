@@ -733,7 +733,44 @@ def list_trash(
         ]
     }
 
+# ============================================================
+# FILES — PERMANENT DELETE
+# ============================================================
 
+@app.delete("/files/{file_id}/permanent")
+def permanently_delete_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    file = db.query(File).filter(
+        File.id == file_id,
+        File.owner_id == user_id,
+        File.is_deleted == True
+    ).first()
+
+    if not file:
+        raise HTTPException(
+            status_code=404,
+            detail="Deleted file not found"
+        )
+
+    try:
+        supabase.storage.from_("files").remove(
+            [file.storage_path]
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not delete file from storage"
+        )
+
+    db.delete(file)
+    db.commit()
+
+    return {
+        "status": "permanently deleted"
+    }
 # ============================================================
 # FILES — RESTORE
 # ============================================================
