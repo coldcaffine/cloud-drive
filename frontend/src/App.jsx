@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 import {
   Cloud,
@@ -18,6 +19,7 @@ import {
   X,
   RotateCcw,
   ArrowLeft,
+  Eye,
 } from "lucide-react";
 
 import api from "./api";
@@ -59,6 +61,10 @@ function App() {
   const [publicLink, setPublicLink] = useState("");
   const [creatingLink, setCreatingLink] = useState(false);
 
+  const [previewFile, setPreviewFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+
   useEffect(() => {
     loadData();
   }, [currentFolderId, currentPage]);
@@ -79,7 +85,7 @@ function App() {
 
       const fileParams =
         currentFolderId === null
-          ? {}
+          ? { folder_id: null }
           : { folder_id: currentFolderId };
 
       const [
@@ -453,6 +459,44 @@ function App() {
     }
   }
 
+  async function handlePermanentDelete(item, type) {
+    const confirmed = window.confirm(
+      `Permanently delete "${item.name}"? This cannot be undone.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setError("");
+
+      if (type === "file") {
+        await api.delete(
+          `/files/${item.id}/permanent`
+        );
+      } else {
+        await api.delete(
+          `/folders/${item.id}/permanent`
+        );
+      }
+
+      await loadData();
+    } catch (err) {
+      console.error(
+        "Permanent delete error:",
+        err
+      );
+
+      setError(
+        getErrorMessage(
+          err,
+          "Could not permanently delete this item."
+        )
+      );
+    }
+  }
+
   async function handleDelete(item, type) {
     if (sharedFolderId !== null) {
       setError(
@@ -750,9 +794,10 @@ function App() {
         item.resource_type ===
         "file"
       ) {
-        await handleDownload(
-          item.resource_id
-        );
+        await handlePreview({
+          id: item.resource_id,
+          name: item.name,
+        });
         return;
       }
 
@@ -853,6 +898,48 @@ function App() {
     }
   }
 
+  async function handlePreview(file) {
+    try {
+      setPreviewLoading(true);
+      setError("");
+
+      const response = await api.get(
+        `/files/${file.id}/download`
+      );
+
+      const downloadUrl =
+        response.data?.download_url;
+
+      if (!downloadUrl) {
+        throw new Error(
+          "Preview URL was not returned."
+        );
+      }
+
+      setPreviewFile(file);
+      setPreviewUrl(downloadUrl);
+    } catch (err) {
+      console.error(
+        "Preview error:",
+        err
+      );
+
+      setError(
+        getErrorMessage(
+          err,
+          "Could not preview this file."
+        )
+      );
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  function closePreview() {
+    setPreviewFile(null);
+    setPreviewUrl("");
+  }
+
   function getFileIcon(filename) {
     if (!filename) {
       return <File size={22} />;
@@ -895,6 +982,15 @@ function App() {
     return <File size={22} />;
   }
 
+  function getFileExtension(filename) {
+    return (
+      filename
+        ?.split(".")
+        .pop()
+        ?.toLowerCase() || ""
+    );
+  }
+
   function formatSize(bytes) {
     if (!bytes) {
       return "0 B";
@@ -927,25 +1023,33 @@ function App() {
   }
 
   function logout() {
-    localStorage.removeItem(
-      "token"
-    );
-
-    window.location.href =
-      "/login";
+    localStorage.removeItem("token");
+    window.location.href = "/login";
   }
 
   const searchText =
     search.toLowerCase();
 
-  const filteredFiles =
-    files.filter(
-      (file) =>
-        file.name &&
-        file.name
-          .toLowerCase()
-          .includes(searchText)
-    );
+  const visibleFiles = files.filter((file) => {
+    const fileFolderId =
+      file.folder_id === undefined || file.folder_id === null
+        ? null
+        : Number(file.folder_id);
+
+    if (currentFolderId === null) {
+      return fileFolderId === null;
+    }
+
+    return fileFolderId === Number(currentFolderId);
+  });
+
+  const filteredFiles = visibleFiles.filter(
+    (file) =>
+      file.name &&
+      file.name
+        .toLowerCase()
+        .includes(searchText)
+  );
 
   const filteredFolders =
     folders.filter(
@@ -1074,16 +1178,29 @@ function App() {
         }
       >
         {type === "file" && (
-          <button
-            type="button"
-            onClick={() =>
-              handleDownload(item.id)
-            }
-            title="Download"
-            className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
-          >
-            <Download size={18} />
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() =>
+                handlePreview(item)
+              }
+              title="Preview"
+              className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
+            >
+              <Eye size={18} />
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                handleDownload(item.id)
+              }
+              title="Download"
+              className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
+            >
+              <Download size={18} />
+            </button>
+          </>
         )}
 
         <button
@@ -1366,17 +1483,31 @@ function App() {
                       </div>
 
                       {sharedFolderId ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleDownload(
-                              file.id
-                            )
-                          }
-                          className="rounded-xl px-3 py-2 text-xs font-semibold text-[#6d5dfc] hover:bg-[#f0edff]"
-                        >
-                          Download
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handlePreview(
+                                file
+                              )
+                            }
+                            className="rounded-xl px-3 py-2 text-xs font-semibold text-[#6d5dfc] hover:bg-[#f0edff]"
+                          >
+                            Preview
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDownload(
+                                file.id
+                              )
+                            }
+                            className="rounded-xl px-3 py-2 text-xs font-semibold text-[#6d5dfc] hover:bg-[#f0edff]"
+                          >
+                            Download
+                          </button>
+                        </div>
                       ) : (
                         renderCardActions(
                           file,
@@ -1466,17 +1597,31 @@ function App() {
                     </span>
 
                     {sharedFolderId ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleDownload(
-                            file.id
-                          )
-                        }
-                        className="text-xs font-semibold text-[#6d5dfc]"
-                      >
-                        Download
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handlePreview(
+                              file
+                            )
+                          }
+                          className="text-xs font-semibold text-[#6d5dfc]"
+                        >
+                          Preview
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDownload(
+                              file.id
+                            )
+                          }
+                          className="text-xs font-semibold text-[#6d5dfc]"
+                        >
+                          Download
+                        </button>
+                      </div>
                     ) : (
                       renderCardActions(
                         file,
@@ -1535,18 +1680,34 @@ function App() {
                       <Folder size={22} />
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRestoreFolder(
-                          folder.id
-                        )
-                      }
-                      className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
-                      title="Restore"
-                    >
-                      <RotateCcw size={18} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleRestoreFolder(
+                            folder.id
+                          )
+                        }
+                        className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
+                        title="Restore"
+                      >
+                        <RotateCcw size={18} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handlePermanentDelete(
+                            folder,
+                            "folder"
+                          )
+                        }
+                        className="rounded-xl p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                        title="Delete permanently"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
                   </div>
 
                   <h4 className="truncate text-sm font-semibold">
@@ -1573,18 +1734,34 @@ function App() {
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRestoreFile(
-                          file.id
-                        )
-                      }
-                      className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
-                      title="Restore"
-                    >
-                      <RotateCcw size={18} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleRestoreFile(
+                            file.id
+                          )
+                        }
+                        className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-[#6d5dfc]"
+                        title="Restore"
+                      >
+                        <RotateCcw size={18} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handlePermanentDelete(
+                            file,
+                            "file"
+                          )
+                        }
+                        className="rounded-xl p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                        title="Delete permanently"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
                   </div>
 
                   <h4 className="truncate text-sm font-semibold">
@@ -2202,8 +2379,125 @@ function App() {
           </div>
         </div>
       )}
+
+      {previewFile && previewUrl && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4 py-6">
+          <div className="flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+              <div className="min-w-0">
+                <h3 className="truncate text-lg font-bold">
+                  {previewFile.name}
+                </h3>
+
+                <p className="text-xs text-gray-400">
+                  File preview
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleDownload(
+                      previewFile.id
+                    )
+                  }
+                  className="rounded-xl px-4 py-2 text-sm font-semibold text-[#6d5dfc] hover:bg-[#f0edff]"
+                >
+                  Download
+                </button>
+
+                <button
+                  type="button"
+                  onClick={closePreview}
+                  className="rounded-xl p-2 text-gray-500 hover:bg-gray-100"
+                  title="Close preview"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex min-h-0 flex-1 items-center justify-center bg-[#f7f7fb] p-6">
+              {previewLoading ? (
+                <div className="text-sm text-gray-400">
+                  Loading preview...
+                </div>
+              ) : [
+                "jpg",
+                "jpeg",
+                "png",
+                "gif",
+                "webp",
+                "svg",
+              ].includes(
+                getFileExtension(
+                  previewFile.name
+                )
+              ) ? (
+                <img
+                  src={previewUrl}
+                  alt={previewFile.name}
+                  className="max-h-full max-w-full rounded-xl object-contain shadow-sm"
+                />
+              ) : getFileExtension(
+                previewFile.name
+              ) === "pdf" ? (
+                <iframe
+                  src={previewUrl}
+                  title={previewFile.name}
+                  className="h-full w-full rounded-xl border border-gray-200 bg-white"
+                />
+              ) : [
+                "txt",
+                "csv",
+                "json",
+              ].includes(
+                getFileExtension(
+                  previewFile.name
+                )
+              ) ? (
+                <iframe
+                  src={previewUrl}
+                  title={previewFile.name}
+                  className="h-full w-full rounded-xl border border-gray-200 bg-white"
+                />
+              ) : (
+                <div className="text-center">
+                  <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-[#eeeaff] text-[#6d5dfc]">
+                    {getFileIcon(
+                      previewFile.name
+                    )}
+                  </div>
+
+                  <h3 className="mb-2 text-lg font-bold">
+                    Preview not available
+                  </h3>
+
+                  <p className="mb-5 text-sm text-gray-400">
+                    This file type cannot be previewed in CloudDrive.
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleDownload(
+                        previewFile.id
+                      )
+                    }
+                    className="rounded-2xl bg-[#6d5dfc] px-5 py-3 text-sm font-semibold text-white"
+                  >
+                    Download file
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 export default App;
+
